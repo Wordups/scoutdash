@@ -85,6 +85,15 @@ export interface VideoProcessRead {
   frame_count_extracted: number;
 }
 
+export interface VideoReadiness {
+  video_id: string;
+  file_available: boolean;
+  processing_ready: boolean;
+  storage_persistent: boolean;
+  extracted_frame_count: number;
+  message: string;
+}
+
 export interface Category {
   id: string;
   organization_id: string;

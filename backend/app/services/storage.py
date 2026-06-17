@@ -107,6 +107,44 @@ def delete_prefix(settings: Settings, backend: str, prefix: str) -> None:
             client.delete_objects(Bucket=settings.s3_bucket, Delete={"Objects": objects})
 
 
+def delete_keys(settings: Settings, backend: str, storage_keys: list[str]) -> None:
+    if not storage_keys:
+        return
+    if backend == "local":
+        for storage_key in storage_keys:
+            path = local_file_path(settings, storage_key)
+            if path.exists():
+                path.unlink()
+        return
+    if backend != "s3":
+        return
+
+    _require_s3_bucket(settings)
+    client = _s3_client(settings)
+    for offset in range(0, len(storage_keys), 1000):
+        objects = [{"Key": key} for key in storage_keys[offset : offset + 1000]]
+        client.delete_objects(Bucket=settings.s3_bucket, Delete={"Objects": objects})
+
+
+def object_exists(settings: Settings, backend: str, storage_key: str) -> bool:
+    if backend == "local":
+        return local_file_path(settings, storage_key).is_file()
+    if backend != "s3":
+        return False
+
+    from botocore.exceptions import ClientError
+
+    _require_s3_bucket(settings)
+    try:
+        _s3_client(settings).head_object(Bucket=settings.s3_bucket, Key=storage_key)
+    except ClientError as exc:
+        status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if status in {403, 404}:
+            return False
+        raise
+    return True
+
+
 def storage_url(settings: Settings, backend: str, storage_key: str) -> str | None:
     normalized_key = storage_key.replace("\\", "/")
     if backend == "local":

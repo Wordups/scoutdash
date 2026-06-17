@@ -262,11 +262,21 @@ def test_video_processing_and_player_track_seed_workflow(client, tmp_path):
     assert upload_response.status_code == 201, upload_response.text
     video = upload_response.json()
 
+    readiness_response = client.get(f"/api/videos/{video['id']}/readiness")
+    assert readiness_response.status_code == 200, readiness_response.text
+    assert readiness_response.json()["file_available"] is True
+    assert readiness_response.json()["processing_ready"] is True
+
     process_response = client.post(f"/api/videos/{video['id']}/process", json={"sample_fps": 1, "max_frames": 4})
     assert process_response.status_code == 200, process_response.text
     processed = process_response.json()
     assert processed["frame_count_extracted"] >= 2
     first_frame = processed["frames"][0]
+    assert first_frame["storage_key"].startswith(f"frames/{video['id']}/")
+
+    processed_readiness = client.get(f"/api/videos/{video['id']}/readiness").json()
+    assert processed_readiness["extracted_frame_count"] == processed["frame_count_extracted"]
+    assert "review moments" in processed_readiness["message"]
     assert first_frame["frame_url"].endswith(".jpg")
 
     track_response = client.post(
@@ -291,3 +301,12 @@ def test_video_processing_and_player_track_seed_workflow(client, tmp_path):
     timeline_response = client.get(f"/api/vision/tracks/{timeline['track']['id']}/timeline")
     assert timeline_response.status_code == 200
     assert timeline_response.json()["moments"][0]["frame_id"] == first_frame["id"]
+
+    stored_video_path = get_settings().local_upload_dir / video["storage_key"]
+    stored_video_path.unlink()
+    missing_response = client.post(f"/api/videos/{video['id']}/process", json={"sample_fps": 1, "max_frames": 4})
+    assert missing_response.status_code == 404
+    assert "Upload the film again" in missing_response.json()["detail"]
+
+    preserved_frames = client.get(f"/api/videos/{video['id']}/frames").json()
+    assert [frame["id"] for frame in preserved_frames] == [frame["id"] for frame in processed["frames"]]

@@ -16,6 +16,7 @@ class Settings(BaseSettings):
 
     storage_backend: str = "local"
     local_upload_dir: Path = Path("./data/uploads")
+    local_storage_persistent: bool = False
     public_media_base_url: str | None = "http://localhost:8000/media"
 
     ffmpeg_binary: str | None = None

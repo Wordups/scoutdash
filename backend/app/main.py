@@ -72,10 +72,12 @@ def healthcheck() -> dict[str, str]:
 
 @app.get("/health/capabilities")
 def capability_healthcheck() -> dict[str, object]:
+    storage_persistent = settings.storage_backend == "s3" or settings.local_storage_persistent
     return {
         "status": "ok",
         "storage_backend": settings.storage_backend,
         "storage_configured": settings.storage_backend == "local" or bool(settings.s3_bucket),
+        "storage_persistent": storage_persistent,
         "video_processing": processing_capabilities(settings),
     }
 

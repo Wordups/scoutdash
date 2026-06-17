@@ -61,6 +61,19 @@ The bucket must exist and allow browser CORS reads from the ScoutDash frontend. 
 creates the local MinIO bucket automatically. `/health/capabilities` reports whether storage and
 video processing are configured before a coach uploads film.
 
+For a Northflank persistent volume instead of S3, mount the volume at a stable path such as
+`/data/scoutdash-film` and configure:
+
+```env
+STORAGE_BACKEND=local
+LOCAL_UPLOAD_DIR=/data/scoutdash-film
+LOCAL_STORAGE_PERSISTENT=true
+PUBLIC_MEDIA_BASE_URL=https://YOUR-BACKEND-URL/media
+```
+
+Without either S3 or a mounted persistent volume, Northflank's service filesystem can be replaced
+during deployment and uploaded film will need to be uploaded again.
+
 ## Current Scope
 
 - organizations, teams, athletes, events

@@ -162,6 +162,15 @@ class VideoProcessRead(BaseModel):
     frame_count_extracted: int
 
 
+class VideoReadinessRead(BaseModel):
+    video_id: str
+    file_available: bool
+    processing_ready: bool
+    storage_persistent: bool
+    extracted_frame_count: int
+    message: str
+
+
 class ClipCreate(BaseModel):
     organization_id: str
     team_id: str

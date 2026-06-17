@@ -44,6 +44,7 @@ import type {
   VideoAsset,
   VideoFrame,
   VideoProcessRead,
+  VideoReadiness,
   VisionTrack,
   ReportEvidenceReference,
   VisionTrackTimeline
@@ -80,6 +81,9 @@ export function ScoutDashApp() {
   const [trackTimeline, setTrackTimeline] = useState<VisionTrackTimeline | null>(null);
   const [isProcessingVideo, setIsProcessingVideo] = useState(false);
   const [isCreatingTrack, setIsCreatingTrack] = useState(false);
+  const [videoReadiness, setVideoReadiness] = useState<VideoReadiness | null>(null);
+  const [isUploadingVideo, setIsUploadingVideo] = useState(false);
+  const [isImportingVideo, setIsImportingVideo] = useState(false);
 
   const [selectedOrgId, setSelectedOrgId] = useState("");
   const [selectedTeamId, setSelectedTeamId] = useState("");
@@ -182,11 +186,13 @@ export function ScoutDashApp() {
       setSelectedPoint(null);
       setTracks([]);
       setTrackTimeline(null);
+      setVideoReadiness(null);
       return;
     }
     void loadEvidence();
     void loadFrames(selectedVideoId);
     void loadTracks(selectedVideoId);
+    void loadVideoReadiness(selectedVideoId);
   }, [selectedVideoId]);
 
   useEffect(() => {
@@ -304,6 +310,16 @@ export function ScoutDashApp() {
         setTrackTimeline(null);
       }
     } catch (error) {
+      showError(error);
+    }
+  }
+
+  async function loadVideoReadiness(videoId = selectedVideoId) {
+    if (!videoId) return;
+    try {
+      setVideoReadiness(await apiGet<VideoReadiness>(`/videos/${videoId}/readiness`));
+    } catch (error) {
+      setVideoReadiness(null);
       showError(error);
     }
   }
@@ -442,6 +458,7 @@ export function ScoutDashApp() {
     event.preventDefault();
     if (!selectedOrgId || !selectedTeamId || !uploadFile) return;
     try {
+      setIsUploadingVideo(true);
       const body = new FormData();
       body.append("organization_id", selectedOrgId);
       body.append("team_id", selectedTeamId);
@@ -456,6 +473,8 @@ export function ScoutDashApp() {
       showSuccess("Film uploaded");
     } catch (error) {
       showError(error);
+    } finally {
+      setIsUploadingVideo(false);
     }
   }
 
@@ -463,6 +482,7 @@ export function ScoutDashApp() {
     event.preventDefault();
     if (!selectedOrgId || !selectedTeamId || !urlImportForm.source_url) return;
     try {
+      setIsImportingVideo(true);
       const created = await apiPost<VideoAsset>(
         "/videos/from-url",
         cleanPayload({
@@ -479,6 +499,8 @@ export function ScoutDashApp() {
       showSuccess("Film imported");
     } catch (error) {
       showError(error);
+    } finally {
+      setIsImportingVideo(false);
     }
   }
 
@@ -495,6 +517,7 @@ export function ScoutDashApp() {
       setSelectedFrameId(processed.frames[0]?.id ?? "");
       setSelectedPoint(null);
       setTrackTimeline(null);
+      await loadVideoReadiness(processed.video.id);
       showSuccess(`${processed.frame_count_extracted} review moments ready`);
     } catch (error) {
       showError(error);
@@ -643,8 +666,8 @@ export function ScoutDashApp() {
     const message =
       rawMessage === "Failed to fetch"
         ? "ScoutDash could not load saved team data. Check the connection and refresh."
-        : rawMessage === "Video file not found on local storage"
-          ? "This film is no longer available. Upload the video again, then select Break Down Film."
+        : rawMessage === "Video file not found on local storage" || rawMessage.includes("stored video file is missing")
+          ? "This film file is missing. Upload the original film again, then select the new copy."
         : rawMessage || "Something went wrong";
     setNotice({ kind: "error", message });
   }
@@ -842,61 +865,46 @@ export function ScoutDashApp() {
     return (
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.95fr)]">
         <div className="space-y-4">
-          <section className="rounded-md border border-line bg-white p-4 shadow-panel">
-            <div className="mb-3 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-              <SelectBox
-                label="Film"
-                value={selectedVideoId}
-                onChange={setSelectedVideoId}
-                options={videos.map((item) => ({ value: item.id, label: item.title }))}
-                icon={<Video size={16} />}
-              />
-              <form className="hidden gap-2 md:grid lg:grid-cols-[minmax(160px,1fr)_minmax(180px,1fr)_auto]" onSubmit={uploadVideo}>
-                <input
-                  className="h-10 rounded-md border border-line px-3 text-sm outline-none focus:border-review"
-                  onChange={(event) => setUploadTitle(event.target.value)}
-                  placeholder="Film title"
-                  value={uploadTitle}
-                />
-                <input
-                  className="h-10 rounded-md border border-line px-3 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5"
-                  onChange={onUploadFileChange}
-                  type="file"
-                  accept="video/*"
-                />
-                <button
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-field px-3 text-sm font-semibold text-white hover:bg-teal-800 disabled:bg-slate-300"
-                  disabled={!selectedOrgId || !selectedTeamId || !uploadFile}
-                  type="submit"
-                >
-                  <Upload aria-hidden="true" size={16} />
-                  Upload Film
-                </button>
-              </form>
+          <section className="rounded-md border border-field/30 bg-white p-4 shadow-panel">
+            <div className="mb-3 flex items-start gap-3">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-field text-sm font-semibold text-white">1</span>
+              <div>
+                <h2 className="text-base font-semibold">Upload Film</h2>
+                <p className="text-sm text-slate-600">Add the game film you want to review with your team.</p>
+              </div>
             </div>
-            <form className="mb-3 hidden gap-2 md:grid lg:grid-cols-[minmax(160px,0.8fr)_minmax(220px,1.4fr)_auto]" onSubmit={importVideoUrl}>
-              <input
-                className="h-10 rounded-md border border-line px-3 text-sm outline-none focus:border-review"
-                onChange={(event) => setUrlImportForm((value) => ({ ...value, title: event.target.value }))}
-                placeholder="URL film title"
-                value={urlImportForm.title}
-              />
-              <input
-                className="h-10 rounded-md border border-line px-3 text-sm outline-none focus:border-review"
-                onChange={(event) => setUrlImportForm((value) => ({ ...value, source_url: event.target.value }))}
-                placeholder="Paste direct video URL"
-                type="url"
-                value={urlImportForm.source_url}
-              />
-              <button
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold text-ink hover:border-review disabled:text-slate-400"
-                disabled={!selectedOrgId || !selectedTeamId || !urlImportForm.source_url}
-                type="submit"
-              >
-                <Plus aria-hidden="true" size={16} />
-                Add Film URL
+            <form className="grid gap-3 lg:grid-cols-[minmax(180px,0.8fr)_minmax(240px,1.2fr)_auto]" onSubmit={uploadVideo}>
+              <input className="h-11 rounded-md border border-line px-3 text-sm outline-none focus:border-field" onChange={(event) => setUploadTitle(event.target.value)} placeholder="Film title" value={uploadTitle} />
+              <input className="h-11 min-w-0 rounded-md border border-line px-3 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5" onChange={onUploadFileChange} type="file" accept="video/*" />
+              <button className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-field px-5 text-sm font-semibold text-white shadow-sm hover:bg-teal-800 disabled:bg-slate-300" disabled={!selectedOrgId || !selectedTeamId || !uploadFile || isUploadingVideo} type="submit">
+                <Upload aria-hidden="true" size={17} /> {isUploadingVideo ? "Uploading Film…" : "Upload Film"}
               </button>
             </form>
+            <details className="mt-3 rounded-md border border-line bg-slate-50">
+              <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-3 text-sm font-semibold text-slate-700">
+                <Plus size={16} /> Add a direct film URL instead
+              </summary>
+              <form className="grid gap-3 border-t border-line p-3 lg:grid-cols-[minmax(180px,0.8fr)_minmax(240px,1.2fr)_auto]" onSubmit={importVideoUrl}>
+                <input className="h-11 rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-field" onChange={(event) => setUrlImportForm((value) => ({ ...value, title: event.target.value }))} placeholder="Film title" value={urlImportForm.title} />
+                <input className="h-11 rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-field" onChange={(event) => setUrlImportForm((value) => ({ ...value, source_url: event.target.value }))} placeholder="Paste direct video URL" type="url" value={urlImportForm.source_url} />
+                <button className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-line bg-white px-4 text-sm font-semibold hover:border-field disabled:text-slate-400" disabled={!selectedOrgId || !selectedTeamId || !urlImportForm.source_url || isImportingVideo} type="submit">
+                  <Plus size={16} /> {isImportingVideo ? "Adding Film…" : "Add Film URL"}
+                </button>
+              </form>
+            </details>
+          </section>
+
+          <section className="rounded-md border border-line bg-white p-4 shadow-panel">
+            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div className="flex-1">
+                <SelectBox label="Film to review" value={selectedVideoId} onChange={setSelectedVideoId} options={videos.map((item) => ({ value: item.id, label: item.title }))} icon={<Video size={16} />} />
+              </div>
+              {selectedVideo ? (
+                <span className={`inline-flex min-h-10 items-center rounded-md px-3 text-sm font-semibold ${videoReadiness?.file_available === false ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"}`}>
+                  {videoReadiness?.message || "Checking film readiness…"}
+                </span>
+              ) : null}
+            </div>
             {selectedVideo?.storage_url ? (
               <video
                 className="aspect-video w-full rounded-md"
@@ -913,55 +921,51 @@ export function ScoutDashApp() {
                 </div>
               </div>
             )}
-            <details className="mt-3 rounded-md border border-line bg-slate-50 md:hidden">
-              <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-3 text-sm font-semibold">
-                <Upload size={16} /> Add film
-              </summary>
-              <div className="space-y-3 border-t border-line p-3">
-                <form className="grid gap-2" onSubmit={uploadVideo}>
-                  <input className="rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-review" onChange={(event) => setUploadTitle(event.target.value)} placeholder="Film title" value={uploadTitle} />
-                  <input className="rounded-md border border-line bg-white px-3 text-sm file:mr-2 file:rounded-md file:border-0 file:bg-slate-100 file:px-2 file:py-1.5" onChange={onUploadFileChange} type="file" accept="video/*" />
-                  <button className="inline-flex items-center justify-center gap-2 rounded-md bg-field px-3 text-sm font-semibold text-white disabled:bg-slate-300" disabled={!selectedOrgId || !selectedTeamId || !uploadFile} type="submit">
-                    <Upload size={16} /> Upload Film
-                  </button>
-                </form>
-                <div className="border-t border-line pt-3">
-                  <form className="grid gap-2" onSubmit={importVideoUrl}>
-                    <input className="rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-review" onChange={(event) => setUrlImportForm((value) => ({ ...value, title: event.target.value }))} placeholder="Film title" value={urlImportForm.title} />
-                    <input className="rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-review" onChange={(event) => setUrlImportForm((value) => ({ ...value, source_url: event.target.value }))} placeholder="Paste direct video URL" type="url" value={urlImportForm.source_url} />
-                    <button className="inline-flex items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold disabled:text-slate-400" disabled={!selectedOrgId || !selectedTeamId || !urlImportForm.source_url} type="submit">
-                      <Plus size={16} /> Add Film URL
-                    </button>
-                  </form>
-                </div>
+            <div className="mt-4">
+              <h2 className="mb-2 text-sm font-semibold">Film Details</h2>
+              <div className="grid grid-cols-2 gap-2 text-sm text-slate-700 sm:grid-cols-3">
+                <Metric label="File" value={selectedVideo?.original_filename || "No film selected"} />
+                <Metric label="Format" value={formatContentType(selectedVideo?.content_type)} />
+                <Metric label="Duration" value={selectedVideo?.duration_seconds != null ? formatTime(selectedVideo.duration_seconds) : "Pending"} />
+                <Metric label="Frame Rate" value={selectedVideo?.fps != null ? `${selectedVideo.fps.toFixed(2)} fps` : "Pending"} />
+                <Metric label="Source Frames" value={selectedVideo?.frame_count != null ? selectedVideo.frame_count.toLocaleString() : "Pending"} />
+                <Metric label="Review Moments" value={(videoReadiness?.extracted_frame_count ?? frames.length).toLocaleString()} />
               </div>
-            </details>
-            <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-slate-700 sm:grid-cols-4">
-              <Metric label="Time" value={formatTime(currentTime)} />
-              <Metric label="Duration" value={formatTime(selectedVideo?.duration_seconds ?? 0)} />
-              <Metric label="Film Readiness" value={selectedVideo?.fps ? "Ready" : "Needs upload"} />
-              <Metric label="Video Detail" value={selectedVideo?.frame_count ? `${selectedVideo.frame_count.toLocaleString()} moments` : "Pending"} />
             </div>
-            <div className="mt-3 rounded-md border border-line bg-slate-50 p-3">
+            {videoReadiness?.file_available === false ? (
+              <div className="mt-3 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                <AlertTriangle className="mt-0.5 shrink-0" size={17} />
+                <div><span className="font-semibold">Film file missing.</span> Upload the original film again above, then select the new copy.</div>
+              </div>
+            ) : null}
+            {selectedVideo && videoReadiness && !videoReadiness.storage_persistent ? (
+              <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                <AlertTriangle className="mt-0.5 shrink-0" size={17} />
+                <div><span className="font-semibold">Permanent film storage is not connected.</span> This film may need to be uploaded again after a server update.</div>
+              </div>
+            ) : null}
+            <div className="mt-4 rounded-md border border-field/30 bg-teal-50 p-4">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <h2 className="flex items-center gap-2 text-sm font-semibold">
+                  <div className="mb-1 text-xs font-semibold uppercase text-teal-700">Step 2</div>
+                  <h2 className="flex items-center gap-2 text-base font-semibold">
                     <Eye aria-hidden="true" size={16} />
-                    Film Breakdown
+                    Break Down Film
                   </h2>
+                  <p className="mt-1 text-sm text-slate-600">Create review moments for manual player selection and evidence tagging.</p>
                   <div className="mt-2 grid grid-cols-2 gap-2 text-sm text-slate-700">
                     <Metric label="Film Moments" value={frames.length.toLocaleString()} />
                     <Metric label="Player Views" value={tracks.length.toLocaleString()} />
                   </div>
                 </div>
                 <button
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-field px-4 text-sm font-semibold text-white hover:bg-teal-800 disabled:bg-slate-300"
-                  disabled={!selectedVideoId || isProcessingVideo}
+                  className="inline-flex h-12 min-w-48 items-center justify-center gap-2 rounded-md bg-field px-5 text-sm font-semibold text-white shadow-sm hover:bg-teal-800 disabled:bg-slate-300"
+                  disabled={!selectedVideoId || isProcessingVideo || videoReadiness?.processing_ready === false}
                   onClick={processSelectedVideo}
                   type="button"
                 >
                   <RefreshCw aria-hidden="true" size={16} />
-                  {isProcessingVideo ? "Breaking down film" : "Break Down Film"}
+                  {isProcessingVideo ? "Preparing review moments…" : frames.length ? "Rebuild Film Moments" : "Break Down Film"}
                 </button>
               </div>
               {frames.length ? (
@@ -2007,6 +2011,12 @@ function formatTime(value: number): string {
   const minutes = Math.floor(seconds / 60);
   const remaining = seconds % 60;
   return `${minutes}:${remaining.toString().padStart(2, "0")}`;
+}
+
+function formatContentType(value: string | null | undefined): string {
+  if (!value) return "Pending";
+  const subtype = value.split("/", 2)[1] || value;
+  return subtype.replace("x-", "").toUpperCase();
 }
 
 function numeric(value: string, fallback: number): number {

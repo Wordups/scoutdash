@@ -12,11 +12,11 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db
 from app.core.config import get_settings
 from app.models import EventModel, TeamModel, VideoFrameModel, VideoModel
-from app.schemas import VideoCreate, VideoFrameRead, VideoProcessRead, VideoProcessRequest, VideoRead, VideoUrlImport
+from app.schemas import VideoCreate, VideoFrameRead, VideoProcessRead, VideoProcessRequest, VideoRead, VideoReadinessRead, VideoUrlImport
 from botocore.exceptions import BotoCoreError, ClientError
 
-from app.services.storage import delete_prefix, materialize_file, save_path, save_upload, storage_url
-from app.services.video import VideoProcessingError, extract_sampled_frames, probe_video
+from app.services.storage import delete_keys, delete_prefix, materialize_file, object_exists, save_path, save_upload, storage_url
+from app.services.video import VideoProcessingError, extract_sampled_frames, probe_video, processing_capabilities
 
 
 router = APIRouter(prefix="/videos", tags=["videos"])
@@ -136,6 +136,40 @@ def get_video(video_id: str, db: Session = Depends(get_db)) -> VideoRead:
     return _video_read(video)
 
 
+@router.get("/{video_id}/readiness", response_model=VideoReadinessRead)
+def get_video_readiness(video_id: str, db: Session = Depends(get_db)) -> VideoReadinessRead:
+    video = db.get(VideoModel, video_id)
+    if video is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    settings = get_settings()
+    try:
+        file_available = object_exists(settings, video.storage_backend, video.storage_key)
+    except (ValueError, BotoCoreError, ClientError) as exc:
+        raise HTTPException(status_code=503, detail=f"Could not check film storage: {exc}") from exc
+    ffmpeg_ready = bool(processing_capabilities(settings)["ready"])
+    extracted_frame_count = db.query(VideoFrameModel).filter(VideoFrameModel.video_id == video.id).count()
+    storage_persistent = video.storage_backend == "s3" or settings.local_storage_persistent
+
+    if not file_available:
+        message = "The source film is missing. Upload the film again to continue."
+    elif not ffmpeg_ready:
+        message = "Film processing is temporarily unavailable."
+    elif extracted_frame_count:
+        message = f"Ready with {extracted_frame_count} review moments."
+    else:
+        message = "Ready to break down."
+
+    return VideoReadinessRead(
+        video_id=video.id,
+        file_available=file_available,
+        processing_ready=file_available and ffmpeg_ready,
+        storage_persistent=storage_persistent,
+        extracted_frame_count=extracted_frame_count,
+        message=message,
+    )
+
+
 @router.post("/{video_id}/process", response_model=VideoProcessRead)
 def process_video(
     video_id: str,
@@ -147,6 +181,9 @@ def process_video(
         raise HTTPException(status_code=404, detail="Video not found")
     settings = get_settings()
     request = payload or VideoProcessRequest()
+    frame_set_prefix = f"frames/{video.id}/{uuid4().hex}"
+    stored_frame_keys: list[str] = []
+    old_frames = list(db.scalars(select(VideoFrameModel).where(VideoFrameModel.video_id == video.id)))
     try:
         with materialize_file(settings, video.storage_backend, video.storage_key) as video_path:
             metadata = probe_video(video_path, settings)
@@ -158,18 +195,20 @@ def process_video(
                     sample_fps=request.sample_fps,
                     max_frames=request.max_frames,
                 )
-                delete_prefix(settings, video.storage_backend, f"frames/{video.id}")
                 for frame in extracted:
+                    storage_key = f"{frame_set_prefix}/{frame.path.name}"
                     save_path(
                         frame.path,
                         settings,
-                        f"frames/{video.id}/{frame.path.name}",
+                        storage_key,
                         "image/jpeg",
                         backend=video.storage_backend,
                     )
+                    stored_frame_keys.append(storage_key)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="The stored video file is missing. Upload the film again.") from exc
     except (VideoProcessingError, subprocess.SubprocessError, ValueError, BotoCoreError, ClientError) as exc:
+        delete_prefix(settings, video.storage_backend, frame_set_prefix)
         raise HTTPException(status_code=400, detail=f"Could not process video: {exc}") from exc
 
     db.query(VideoFrameModel).filter(VideoFrameModel.video_id == video.id).delete()
@@ -178,8 +217,7 @@ def process_video(
     video.frame_count = metadata["frame_count"]
 
     frame_models: list[VideoFrameModel] = []
-    for frame in extracted:
-        storage_key = f"frames/{video.id}/{frame.path.name}"
+    for frame, storage_key in zip(extracted, stored_frame_keys, strict=True):
         model = VideoFrameModel(
             video_id=video.id,
             frame_number=frame.frame_number,
@@ -191,10 +229,21 @@ def process_video(
         db.add(model)
         frame_models.append(model)
 
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        delete_prefix(settings, video.storage_backend, frame_set_prefix)
+        raise
     db.refresh(video)
     for model in frame_models:
         db.refresh(model)
+
+    try:
+        delete_keys(settings, video.storage_backend, [frame.storage_key for frame in old_frames])
+    except (OSError, ValueError, BotoCoreError, ClientError):
+        # The new frame set is already committed; stale-object cleanup can be retried separately.
+        pass
 
     return VideoProcessRead(
         video=_video_read(video),
