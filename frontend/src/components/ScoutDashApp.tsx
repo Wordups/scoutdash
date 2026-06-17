@@ -45,10 +45,11 @@ import type {
   VisionTrackTimeline
 } from "@/types/scoutdash";
 
-type Tab = "review" | "directory" | "taxonomy" | "vision";
+type Tab = "review" | "directory" | "taxonomy" | "reports";
 type Notice = { kind: "idle" | "loading" | "success" | "error"; message: string };
 
 const initialNotice: Notice = { kind: "idle", message: "" };
+const workflowSteps = ["Upload Film", "Break Down Film", "Review Findings", "Review Players", "Generate Reports"] as const;
 
 export function ScoutDashApp() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -122,6 +123,13 @@ export function ScoutDashApp() {
       return true;
     });
   }, [evidence, selectedAthleteId, selectedVideoId]);
+  const currentWorkflowStep = useMemo(() => {
+    if (!selectedVideoId) return "Upload Film";
+    if (!frames.length && !trackTimeline) return "Break Down Film";
+    if (!filteredEvidence.length) return "Review Findings";
+    if (!selectedAthleteId || !profile) return "Review Players";
+    return "Generate Reports";
+  }, [filteredEvidence.length, frames.length, profile, selectedAthleteId, selectedVideoId, trackTimeline]);
 
   useEffect(() => {
     void loadOrganizations();
@@ -469,7 +477,7 @@ export function ScoutDashApp() {
       setSelectedFrameId(processed.frames[0]?.id ?? "");
       setSelectedPoint(null);
       setTrackTimeline(null);
-      showSuccess(`${processed.frame_count_extracted} frames ready for identification`);
+      showSuccess(`${processed.frame_count_extracted} review moments ready`);
     } catch (error) {
       showError(error);
     } finally {
@@ -560,7 +568,7 @@ export function ScoutDashApp() {
       );
       setTrackTimeline(timeline);
       setTracks((items) => [timeline.track, ...items.filter((item) => item.id !== timeline.track.id)]);
-      showSuccess("Player track seed saved");
+      showSuccess("Athlete view saved");
     } catch (error) {
       showError(error);
     } finally {
@@ -613,7 +621,12 @@ export function ScoutDashApp() {
   }
 
   function showError(error: unknown) {
-    setNotice({ kind: "error", message: error instanceof Error ? error.message : "Something went wrong" });
+    const rawMessage = error instanceof Error ? error.message : "";
+    const message =
+      rawMessage === "Failed to fetch"
+        ? "ScoutDash could not load saved team data. Check the connection and refresh."
+        : rawMessage || "Something went wrong";
+    setNotice({ kind: "error", message });
   }
 
   return (
@@ -626,13 +639,13 @@ export function ScoutDashApp() {
             </div>
             <div>
               <h1 className="text-2xl font-semibold">ScoutDash</h1>
-              <p className="text-sm text-slate-600">Film evidence library</p>
+              <p className="text-sm text-slate-600">Break down film, review findings, and share evidence-based reports.</p>
             </div>
           </div>
         </div>
         <div className="grid gap-2 sm:grid-cols-3 lg:w-[720px]">
           <SelectBox
-            label="Organization"
+            label="Program"
             value={selectedOrgId}
             onChange={setSelectedOrgId}
             options={organizations.map((item) => ({ value: item.id, label: item.name }))}
@@ -659,22 +672,26 @@ export function ScoutDashApp() {
       </header>
 
       <section className="mx-auto mt-4 max-w-7xl">
+        <CoachWorkflow currentStep={currentWorkflowStep} />
+      </section>
+
+      <section className="mx-auto mt-4 max-w-7xl">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex rounded-md border border-line bg-white p-1 shadow-panel">
-            <TabButton active={tab === "review"} icon={<Video size={16} />} label="Review" onClick={() => setTab("review")} />
+            <TabButton active={tab === "review"} icon={<Video size={16} />} label="Film Room" onClick={() => setTab("review")} />
             <TabButton
               active={tab === "directory"}
               icon={<Users size={16} />}
-              label="Directory"
+              label="Roster"
               onClick={() => setTab("directory")}
             />
             <TabButton
               active={tab === "taxonomy"}
               icon={<Tags size={16} />}
-              label="Taxonomy"
+              label="Tag Library"
               onClick={() => setTab("taxonomy")}
             />
-            <TabButton active={tab === "vision"} icon={<Eye size={16} />} label="Vision" onClick={() => setTab("vision")} />
+            <TabButton active={tab === "reports"} icon={<FileText size={16} />} label="Reports" onClick={() => setTab("reports")} />
           </div>
           <button
             className="inline-flex h-10 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium shadow-panel hover:border-review"
@@ -708,7 +725,7 @@ export function ScoutDashApp() {
         {tab === "review" ? renderReview() : null}
         {tab === "directory" ? renderDirectory() : null}
         {tab === "taxonomy" ? renderTaxonomy() : null}
-        {tab === "vision" ? renderVision() : null}
+        {tab === "reports" ? renderReports() : null}
       </section>
     </main>
   );
@@ -745,7 +762,7 @@ export function ScoutDashApp() {
                   type="submit"
                 >
                   <Upload aria-hidden="true" size={16} />
-                  Upload
+                  Upload Film
                 </button>
               </form>
             </div>
@@ -769,7 +786,7 @@ export function ScoutDashApp() {
                 type="submit"
               >
                 <Plus aria-hidden="true" size={16} />
-                Import
+                Add Film URL
               </button>
             </form>
             {selectedVideo?.storage_url ? (
@@ -791,8 +808,73 @@ export function ScoutDashApp() {
             <div className="mt-3 grid gap-2 text-sm text-slate-700 sm:grid-cols-4">
               <Metric label="Time" value={formatTime(currentTime)} />
               <Metric label="Duration" value={formatTime(selectedVideo?.duration_seconds ?? 0)} />
-              <Metric label="FPS" value={selectedVideo?.fps ? selectedVideo.fps.toFixed(2) : "Pending"} />
-              <Metric label="Frames" value={selectedVideo?.frame_count?.toLocaleString() ?? "Pending"} />
+              <Metric label="Film Readiness" value={selectedVideo?.fps ? "Ready" : "Needs upload"} />
+              <Metric label="Video Detail" value={selectedVideo?.frame_count ? `${selectedVideo.frame_count.toLocaleString()} moments` : "Pending"} />
+            </div>
+            <div className="mt-3 rounded-md border border-line bg-slate-50 p-3">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h2 className="flex items-center gap-2 text-sm font-semibold">
+                    <Eye aria-hidden="true" size={16} />
+                    Film Breakdown
+                  </h2>
+                  <div className="mt-2 grid gap-2 text-sm text-slate-700 sm:grid-cols-2">
+                    <Metric label="Film Moments" value={frames.length.toLocaleString()} />
+                    <Metric label="Player Views" value={tracks.length.toLocaleString()} />
+                  </div>
+                </div>
+                <button
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-field px-4 text-sm font-semibold text-white hover:bg-teal-800 disabled:bg-slate-300"
+                  disabled={!selectedVideoId || isProcessingVideo}
+                  onClick={processSelectedVideo}
+                  type="button"
+                >
+                  <RefreshCw aria-hidden="true" size={16} />
+                  {isProcessingVideo ? "Breaking down film" : "Break Down Film"}
+                </button>
+              </div>
+              {frames.length ? (
+                <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px]">
+                  <div className="grid max-h-52 grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-4">
+                    {frames.slice(0, 12).map((frame) => (
+                      <button
+                        className={`relative aspect-video overflow-hidden rounded-md border bg-white text-left ${
+                          selectedFrame?.id === frame.id ? "border-review ring-2 ring-blue-100" : "border-line hover:border-review"
+                        }`}
+                        key={frame.id}
+                        onClick={(event) => selectFramePoint(frame, event)}
+                        type="button"
+                      >
+                        {frame.frame_url ? <img alt="" className="h-full w-full object-cover" src={mediaUrl(frame.frame_url)} /> : null}
+                        <span className="absolute bottom-1 left-1 rounded bg-white/90 px-1.5 py-0.5 text-[10px] font-semibold text-ink">
+                          {formatTime(frame.timestamp_seconds)}
+                        </span>
+                        {selectedFrame?.id === frame.id && selectedPoint ? (
+                          <span
+                            className="absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-review shadow"
+                            style={{ left: `${selectedPoint.x * 100}%`, top: `${selectedPoint.y * 100}%` }}
+                          />
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="space-y-2">
+                    <Metric
+                      label="Selected Player"
+                      value={selectedPoint ? `${Math.round(selectedPoint.x * 100)}%, ${Math.round(selectedPoint.y * 100)}%` : "None"}
+                    />
+                    <button
+                      className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-review px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:bg-slate-300"
+                      disabled={!selectedVideoId || !selectedFrame || !selectedPoint || isCreatingTrack}
+                      onClick={createTrackSeed}
+                      type="button"
+                    >
+                      <Save aria-hidden="true" size={16} />
+                      {isCreatingTrack ? "Saving" : "Save Player View"}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </section>
 
@@ -800,7 +882,7 @@ export function ScoutDashApp() {
             <div className="mb-3 flex items-center justify-between">
               <h2 className="flex items-center gap-2 text-base font-semibold">
                 <Crosshair aria-hidden="true" size={18} />
-                Timestamp Tag
+                Tag What You See
               </h2>
               <button
                 className="inline-flex h-9 items-center gap-2 rounded-md border border-line px-3 text-sm font-medium hover:border-review"
@@ -822,7 +904,7 @@ export function ScoutDashApp() {
                     }}
                     value={tagForm.athlete_id || selectedAthleteId}
                   >
-                    <option value="">Select</option>
+                    <option value="">Choose athlete</option>
                     {athletes.map((item) => (
                       <option key={item.id} value={item.id}>
                         {athleteLabel(item)}
@@ -830,13 +912,13 @@ export function ScoutDashApp() {
                     ))}
                   </select>
                 </FieldLabel>
-                <FieldLabel label="Category">
+                <FieldLabel label="Focus Area">
                   <select
                     className="h-10 w-full rounded-md border border-line px-3 text-sm outline-none focus:border-review"
                     onChange={(event) => setTagForm((value) => ({ ...value, category_id: event.target.value }))}
                     value={tagForm.category_id}
                   >
-                    <option value="">Select</option>
+                    <option value="">Choose focus area</option>
                     {categories.map((item) => (
                       <option key={item.id} value={item.id}>
                         {item.name}
@@ -844,13 +926,13 @@ export function ScoutDashApp() {
                     ))}
                   </select>
                 </FieldLabel>
-                <FieldLabel label="Tag">
+                <FieldLabel label="Behavior">
                   <select
                     className="h-10 w-full rounded-md border border-line px-3 text-sm outline-none focus:border-review"
                     onChange={(event) => setTagForm((value) => ({ ...value, tag_id: event.target.value }))}
                     value={tagForm.tag_id}
                   >
-                    <option value="">Select</option>
+                    <option value="">Choose behavior</option>
                     {tagsForCategory.map((item) => (
                       <option key={item.id} value={item.id}>
                         {item.name}
@@ -867,16 +949,16 @@ export function ScoutDashApp() {
                   value={tagForm.timestamp_seconds}
                 />
                 <TextInput
-                  label="Clip Start"
+                  label="Clip Starts"
                   onChange={(value) => setTagForm((item) => ({ ...item, clip_start_seconds: value }))}
                   value={tagForm.clip_start_seconds}
                 />
                 <TextInput
-                  label="Clip End"
+                  label="Clip Ends"
                   onChange={(value) => setTagForm((item) => ({ ...item, clip_end_seconds: value }))}
                   value={tagForm.clip_end_seconds}
                 />
-                <FieldLabel label="Evidence Type">
+                <FieldLabel label="How should this be used?">
                   <div className="flex h-10 rounded-md border border-line bg-slate-50 p-1">
                     {(["neutral", "strength", "development_area"] as EvidenceType[]).map((value) => (
                       <button
@@ -897,7 +979,7 @@ export function ScoutDashApp() {
               <textarea
                 className="min-h-24 w-full rounded-md border border-line px-3 py-2 text-sm outline-none focus:border-review"
                 onChange={(event) => setTagForm((value) => ({ ...value, notes: event.target.value }))}
-                placeholder="Coach notes"
+                placeholder="What happened? What should the athlete remember?"
                 value={tagForm.notes}
               />
               <button
@@ -906,7 +988,7 @@ export function ScoutDashApp() {
                 type="submit"
               >
                 <Save aria-hidden="true" size={16} />
-                Save Evidence
+                Save to Athlete Profile
               </button>
             </form>
           </section>
@@ -928,7 +1010,7 @@ export function ScoutDashApp() {
           <section className="rounded-md border border-line bg-white p-4 shadow-panel">
             <h2 className="mb-3 flex items-center gap-2 text-base font-semibold">
               <ListChecks aria-hidden="true" size={18} />
-              Evidence Clips
+              Evidence Library
             </h2>
             <div className="space-y-2">
               {filteredEvidence.length ? (
@@ -936,7 +1018,7 @@ export function ScoutDashApp() {
                   <EvidenceRow evidence={item} key={item.id} onJump={jumpTo} />
                 ))
               ) : (
-                <EmptyState label="No evidence yet" />
+                <EmptyState label="Pause the film, tag a behavior, and evidence will appear here." />
               )}
             </div>
           </section>
@@ -985,24 +1067,58 @@ export function ScoutDashApp() {
     );
   }
 
+  function renderReports() {
+    return (
+      <div className="grid gap-4 lg:grid-cols-[minmax(360px,0.8fr)_minmax(0,1.2fr)]">
+        <div className="space-y-4">
+          <ProfilePanel
+            isGeneratingReport={isGeneratingReport}
+            onGenerateReport={generateReport}
+            profile={profile}
+            selectedAthlete={selectedAthlete}
+          />
+          <section className="rounded-md border border-line bg-white p-4 shadow-panel">
+            <h2 className="mb-3 flex items-center gap-2 text-base font-semibold">
+              <ListChecks aria-hidden="true" size={18} />
+              Evidence Used for Reports
+            </h2>
+            <div className="space-y-2">
+              {filteredEvidence.length ? (
+                filteredEvidence.map((item) => <EvidenceRow evidence={item} key={item.id} onJump={jumpTo} />)
+              ) : (
+                <EmptyState label="Break down film and save evidence before generating reports." />
+              )}
+            </div>
+          </section>
+        </div>
+        <ReportPanel
+          activeReport={activeReport}
+          onDownloadReport={downloadReport}
+          onSelectReport={setActiveReport}
+          reports={reports}
+        />
+      </div>
+    );
+  }
+
   function renderDirectory() {
     return (
       <div className="grid gap-4 lg:grid-cols-2">
         <section className="rounded-md border border-line bg-white p-4 shadow-panel">
           <h2 className="mb-3 flex items-center gap-2 text-base font-semibold">
             <Users aria-hidden="true" size={18} />
-            Organization
+            Program
           </h2>
           <form className="grid gap-3 md:grid-cols-2" onSubmit={createOrganization}>
             <TextInput label="Name" onChange={(value) => setOrganizationForm((item) => ({ ...item, name: value }))} value={organizationForm.name} />
             <TextInput
-              label="Sport Label"
+              label="Primary Sport"
               onChange={(value) => setOrganizationForm((item) => ({ ...item, sport_label: value }))}
               value={organizationForm.sport_label}
             />
             <button className="inline-flex h-10 w-fit items-center gap-2 rounded-md bg-field px-4 text-sm font-semibold text-white" type="submit">
               <Plus size={16} />
-              Save
+              Save Program
             </button>
           </form>
         </section>
@@ -1010,7 +1126,7 @@ export function ScoutDashApp() {
         <section className="rounded-md border border-line bg-white p-4 shadow-panel">
           <h2 className="mb-3 flex items-center gap-2 text-base font-semibold">
             <ClipboardList aria-hidden="true" size={18} />
-            Team
+            Team Setup
           </h2>
           <form className="grid gap-3 md:grid-cols-3" onSubmit={createTeam}>
             <TextInput label="Name" onChange={(value) => setTeamForm((item) => ({ ...item, name: value }))} value={teamForm.name} />
@@ -1018,7 +1134,7 @@ export function ScoutDashApp() {
             <TextInput label="Season" onChange={(value) => setTeamForm((item) => ({ ...item, season: value }))} value={teamForm.season} />
             <button className="inline-flex h-10 w-fit items-center gap-2 rounded-md bg-field px-4 text-sm font-semibold text-white" type="submit">
               <Plus size={16} />
-              Save
+              Save Team
             </button>
           </form>
         </section>
@@ -1026,7 +1142,7 @@ export function ScoutDashApp() {
         <section className="rounded-md border border-line bg-white p-4 shadow-panel">
           <h2 className="mb-3 flex items-center gap-2 text-base font-semibold">
             <UserRound aria-hidden="true" size={18} />
-            Athletes
+            Roster
           </h2>
           <form className="grid gap-3 md:grid-cols-3" onSubmit={createAthlete}>
             <TextInput
@@ -1046,7 +1162,7 @@ export function ScoutDashApp() {
             />
             <button className="inline-flex h-10 w-fit items-center gap-2 rounded-md bg-review px-4 text-sm font-semibold text-white" type="submit">
               <Plus size={16} />
-              Save
+              Add Athlete
             </button>
           </form>
           <ListBlock items={athletes.map((item) => [athleteLabel(item), item.position || "Active"])} />
@@ -1055,7 +1171,7 @@ export function ScoutDashApp() {
         <section className="rounded-md border border-line bg-white p-4 shadow-panel">
           <h2 className="mb-3 flex items-center gap-2 text-base font-semibold">
             <Calendar aria-hidden="true" size={18} />
-            Events
+            Games and Practices
           </h2>
           <form className="grid gap-3 md:grid-cols-2" onSubmit={createEvent}>
             <TextInput label="Name" onChange={(value) => setEventForm((item) => ({ ...item, name: value }))} value={eventForm.name} />
@@ -1077,7 +1193,7 @@ export function ScoutDashApp() {
             />
             <button className="inline-flex h-10 w-fit items-center gap-2 rounded-md bg-court px-4 text-sm font-semibold text-white" type="submit">
               <Plus size={16} />
-              Save
+              Save Event
             </button>
           </form>
           <ListBlock items={events.map((item) => [item.name, [item.opponent, item.event_date].filter(Boolean).join(" · ")])} />
@@ -1092,7 +1208,7 @@ export function ScoutDashApp() {
         <section className="rounded-md border border-line bg-white p-4 shadow-panel">
           <h2 className="mb-3 flex items-center gap-2 text-base font-semibold">
             <Layers3 aria-hidden="true" size={18} />
-            Categories
+            Focus Areas
           </h2>
           <form className="grid gap-3 md:grid-cols-2" onSubmit={createCategory}>
             <TextInput
@@ -1113,7 +1229,7 @@ export function ScoutDashApp() {
             />
             <button className="inline-flex h-10 w-fit items-center gap-2 rounded-md bg-field px-4 text-sm font-semibold text-white" type="submit">
               <Plus size={16} />
-              Save
+              Save Focus Area
             </button>
           </form>
           <ListBlock items={categories.map((item) => [item.name, item.sport || "All sports"])} />
@@ -1122,16 +1238,16 @@ export function ScoutDashApp() {
         <section className="rounded-md border border-line bg-white p-4 shadow-panel">
           <h2 className="mb-3 flex items-center gap-2 text-base font-semibold">
             <Tags aria-hidden="true" size={18} />
-            Tags
+            Behaviors
           </h2>
           <form className="grid gap-3 md:grid-cols-2" onSubmit={createTagDefinition}>
-            <FieldLabel label="Category">
+            <FieldLabel label="Focus Area">
               <select
                 className="h-10 w-full rounded-md border border-line px-3 text-sm outline-none focus:border-review"
                 onChange={(event) => setTagDefinitionForm((item) => ({ ...item, category_id: event.target.value }))}
                 value={tagDefinitionForm.category_id}
               >
-                <option value="">Select</option>
+                <option value="">Choose focus area</option>
                 {categories.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name}
@@ -1152,7 +1268,7 @@ export function ScoutDashApp() {
             />
             <button className="inline-flex h-10 w-fit items-center gap-2 rounded-md bg-review px-4 text-sm font-semibold text-white" type="submit">
               <Plus size={16} />
-              Save
+              Save Behavior
             </button>
           </form>
           <ListBlock
@@ -1188,14 +1304,14 @@ export function ScoutDashApp() {
               type="button"
             >
               <RefreshCw aria-hidden="true" size={16} />
-              {isProcessingVideo ? "Processing" : "Process Video"}
+              {isProcessingVideo ? "Breaking down film" : "Break Down Film"}
             </button>
           </div>
           <div className="mb-4 grid gap-2 text-sm text-slate-700 sm:grid-cols-4">
-            <Metric label="Frames" value={frames.length.toLocaleString()} />
-            <Metric label="Athlete" value={selectedAthlete ? athleteLabel(selectedAthlete) : "Unassigned"} />
-            <Metric label="Selected" value={selectedFrame ? formatTime(selectedFrame.timestamp_seconds) : "None"} />
-            <Metric label="Tracks" value={tracks.length.toLocaleString()} />
+            <Metric label="Film Moments" value={frames.length.toLocaleString()} />
+            <Metric label="Player Focus" value={selectedAthlete ? athleteLabel(selectedAthlete) : "Choose player"} />
+            <Metric label="Selected Moment" value={selectedFrame ? formatTime(selectedFrame.timestamp_seconds) : "None"} />
+            <Metric label="Player Views" value={tracks.length.toLocaleString()} />
           </div>
 
           {selectedFrame ? (
@@ -1208,7 +1324,7 @@ export function ScoutDashApp() {
                 {selectedFrameUrl ? (
                   <img alt="" className="h-full w-full object-contain" src={selectedFrameUrl} />
                 ) : (
-                  <div className="flex h-full items-center justify-center text-sm text-slate-500">Frame unavailable</div>
+                  <div className="flex h-full items-center justify-center text-sm text-slate-500">Moment unavailable</div>
                 )}
                 {selectedPoint ? (
                   <span
@@ -1236,16 +1352,16 @@ export function ScoutDashApp() {
               </div>
             </div>
           ) : (
-            <EmptyState label={selectedVideoId ? "No frames extracted" : "No film selected"} />
+            <EmptyState label={selectedVideoId ? "Break down the film, then click a player in one clear moment." : "Choose film to start breakdown."} />
           )}
 
           <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="grid gap-2 text-sm text-slate-700 sm:grid-cols-2 md:min-w-[420px]">
               <Metric
-                label="Point"
+                label="Selected Player"
                 value={selectedPoint ? `${Math.round(selectedPoint.x * 100)}%, ${Math.round(selectedPoint.y * 100)}%` : "None"}
               />
-              <Metric label="Track Status" value={activeTrackStatus ? String(activeTrackStatus) : "Not created"} />
+              <Metric label="Player View" value={activeTrackStatus ? String(activeTrackStatus) : "Not saved"} />
             </div>
             <button
               className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-review px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:bg-slate-300"
@@ -1254,7 +1370,7 @@ export function ScoutDashApp() {
               type="button"
             >
               <Save aria-hidden="true" size={16} />
-              {isCreatingTrack ? "Creating" : "Create Player Track"}
+              {isCreatingTrack ? "Saving" : "Save Player View"}
             </button>
           </div>
         </section>
@@ -1263,10 +1379,10 @@ export function ScoutDashApp() {
           <div className="mb-3 flex items-center justify-between gap-3">
             <h2 className="flex items-center gap-2 text-base font-semibold">
               <Activity aria-hidden="true" size={18} />
-              Athlete Timeline
+              Breakdown Findings
             </h2>
             <span className="rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
-              {trackTimeline ? `${trackTimeline.moments.length} moments` : "No timeline"}
+              {trackTimeline ? `${trackTimeline.moments.length} moments` : "No moments"}
             </span>
           </div>
 
@@ -1277,7 +1393,7 @@ export function ScoutDashApp() {
                   <div>
                     <div className="font-semibold">{trackTimeline.track.track_label || "Coach-selected player"}</div>
                     <div className="mt-1 text-xs text-slate-600">
-                      {trackTimeline.athlete ? athleteLabel(trackTimeline.athlete) : "Unassigned"} - {trackTimeline.track.source}
+                      {trackTimeline.athlete ? athleteLabel(trackTimeline.athlete) : "Unassigned athlete"}
                     </div>
                   </div>
                   <span className="rounded bg-white px-2 py-1 text-xs font-medium text-slate-700">{trackTimeline.track.status}</span>
@@ -1303,7 +1419,7 @@ export function ScoutDashApp() {
                       <div className="flex min-w-0 items-center justify-between gap-2">
                         <div>
                           <div className="font-semibold">{formatTime(moment.timestamp_seconds)}</div>
-                          <div className="text-xs text-slate-600">Frame {moment.frame_number}</div>
+                          <div className="text-xs text-slate-600">Moment {moment.frame_number}</div>
                         </div>
                         <button
                           className="inline-flex h-8 items-center gap-1.5 rounded-md border border-line px-2.5 text-xs font-semibold hover:border-review"
@@ -1311,7 +1427,7 @@ export function ScoutDashApp() {
                           type="button"
                         >
                           <Tags aria-hidden="true" size={13} />
-                          Tag
+                          Tag Evidence
                         </button>
                       </div>
                     </div>
@@ -1320,11 +1436,11 @@ export function ScoutDashApp() {
               </div>
             </div>
           ) : (
-            <EmptyState label="No athlete timeline" />
+            <EmptyState label="Click a player in the film to organize moments for tagging." />
           )}
 
           <div className="mt-4 space-y-2">
-            <div className="text-xs font-semibold uppercase text-slate-500">Stored Tracks</div>
+            <div className="text-xs font-semibold uppercase text-slate-500">Player Views in This Film</div>
             {tracks.length ? (
               tracks.slice(0, 6).map((track) => (
                 <button
@@ -1342,13 +1458,49 @@ export function ScoutDashApp() {
                 </button>
               ))
             ) : (
-              <EmptyState label="No tracks stored" />
+              <EmptyState label="No player views saved yet" />
             )}
           </div>
         </section>
       </div>
     );
   }
+}
+
+function CoachWorkflow({ currentStep }: { currentStep: (typeof workflowSteps)[number] }) {
+  return (
+    <section className="rounded-md border border-line bg-white p-3 shadow-panel">
+      <div className="mb-2 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-ink">Coach workflow</h2>
+          <p className="text-xs text-slate-600">Break down film first. Player evidence and reports come from that work.</p>
+        </div>
+        <span className="text-xs font-semibold uppercase text-slate-500">Current step: {currentStep}</span>
+      </div>
+      <div className="grid gap-2 md:grid-cols-5">
+        {workflowSteps.map((step, index) => {
+          const active = step === currentStep;
+          return (
+            <div
+              className={`flex min-h-14 items-center gap-2 rounded-md border px-3 py-2 text-sm ${
+                active ? "border-review bg-blue-50 text-review" : "border-line bg-slate-50 text-slate-700"
+              }`}
+              key={step}
+            >
+              <span
+                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
+                  active ? "bg-review text-white" : "bg-white text-slate-600"
+                }`}
+              >
+                {index + 1}
+              </span>
+              <span className="font-semibold">{step}</span>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
 }
 
 function ProfilePanel({
@@ -1367,7 +1519,7 @@ function ProfilePanel({
       <div className="mb-3 flex items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 text-base font-semibold">
           <UserRound aria-hidden="true" size={18} />
-          Athlete Profile
+          Athlete Development Profile
         </h2>
         <button
           className="inline-flex h-9 items-center gap-2 rounded-md bg-ink px-3 text-sm font-semibold text-white hover:bg-slate-700 disabled:bg-slate-300"
@@ -1391,8 +1543,8 @@ function ProfilePanel({
           </div>
           <ProfileSection label="Strengths" items={profile.strengths} />
           <ProfileSection label="Development Areas" items={profile.development_areas} />
-          <ProfileSection label="Behavior Frequency" items={profile.behavior_frequency} />
-          <ProfileSection label="Behavior Consistency" items={profile.behavior_consistency} />
+          <ProfileSection label="Most Seen Behaviors" items={profile.behavior_frequency} />
+          <ProfileSection label="Shows Up Across Film" items={profile.behavior_consistency} />
         </div>
       ) : (
         <EmptyState label={selectedAthlete ? "Profile loading" : "No athlete selected"} />
@@ -1417,7 +1569,7 @@ function ReportPanel({
       <div className="mb-3 flex items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 text-base font-semibold">
           <FileText aria-hidden="true" size={18} />
-          Development Report
+          Reports
         </h2>
         <button
           className="inline-flex h-9 items-center gap-2 rounded-md border border-line px-3 text-sm font-medium hover:border-review disabled:text-slate-400"
@@ -1452,7 +1604,7 @@ function ReportPanel({
           <div className="rounded-md border border-line bg-slate-50 p-3 text-sm">
             <div className="font-semibold">{activeReport.title}</div>
             <div className="mt-1 text-xs text-slate-600">
-              {activeReport.report_data.evidence_count} evidence tags - {activeReport.report_data.note_count} coach notes
+              {activeReport.report_data.evidence_count} saved evidence clips - {activeReport.report_data.note_count} coach notes
             </div>
             <p className="mt-2 text-xs text-slate-600">{activeReport.report_data.traceability_statement}</p>
           </div>
@@ -1491,7 +1643,7 @@ function ReportPanel({
           ))}
         </div>
       ) : (
-        <EmptyState label="Generate a report from the athlete profile" />
+        <EmptyState label="Generate reports after film has been broken down and evidence is saved." />
       )}
     </section>
   );
@@ -1513,7 +1665,6 @@ function ReportEvidenceChip({ evidence }: { evidence: ReportEvidenceReference })
       </div>
       <div className="mt-1 text-slate-600">{evidence.video_title}</div>
       {evidence.notes ? <div className="mt-1 text-slate-700">{evidence.notes}</div> : null}
-      <div className="mt-1 font-mono text-[10px] text-slate-400">tag {evidence.evidence_tag_id}</div>
     </div>
   );
 }
@@ -1540,7 +1691,7 @@ function ProfileSection({ label, items }: { label: string; items: AthleteProfile
             </div>
           ))
         ) : (
-          <EmptyState label="No entries" />
+          <EmptyState label="No evidence saved for this section yet" />
         )}
       </div>
     </div>
@@ -1682,7 +1833,7 @@ function ListBlock({ items }: { items: string[][] }) {
           </div>
         ))
       ) : (
-        <EmptyState label="No records" />
+        <EmptyState label="Nothing saved yet" />
       )}
     </div>
   );
