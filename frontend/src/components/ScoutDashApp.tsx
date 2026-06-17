@@ -625,6 +625,8 @@ export function ScoutDashApp() {
     const message =
       rawMessage === "Failed to fetch"
         ? "ScoutDash could not load saved team data. Check the connection and refresh."
+        : rawMessage === "Video file not found on local storage"
+          ? "This film is no longer available. Upload the video again, then select Break Down Film."
         : rawMessage || "Something went wrong";
     setNotice({ kind: "error", message });
   }

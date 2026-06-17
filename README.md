@@ -9,8 +9,8 @@ The current product foundation is the Video Intelligence Engine: upload or impor
 - Frontend: Next.js, TypeScript, Tailwind
 - Backend: FastAPI, SQLAlchemy
 - Database: PostgreSQL in Docker, SQLite fallback for quick local backend runs
-- Video: FFmpeg/FFprobe metadata hooks
-- Storage: local uploads by default, S3-compatible settings prepared
+- Video: FFmpeg frame extraction with a packaged binary fallback; FFprobe is optional
+- Storage: local or S3-compatible persistent video and frame storage
 - Vision: SAM3-ready module at `services/vision`
 
 ## Local Development
@@ -25,6 +25,7 @@ Then open:
 - Frontend: http://localhost:3000
 - Backend docs: http://localhost:8000/docs
 - Health: http://localhost:8000/health
+- Processing diagnostics: http://localhost:8000/health/capabilities
 
 For backend-only development:
 
@@ -35,6 +36,30 @@ python -m venv .venv
 pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
+
+The Python dependencies include a portable FFmpeg executable, so backend-only development and
+Northflank builds do not require a separate machine-level FFmpeg installation. A configured
+`FFMPEG_BINARY` still takes precedence, followed by a system installation.
+
+## Production Film Storage
+
+Production must use either a persistent volume with `STORAGE_BACKEND=local` or S3-compatible
+object storage. S3 is recommended because uploaded film and generated review frames survive
+service redeploys. Configure:
+
+```env
+STORAGE_BACKEND=s3
+S3_ENDPOINT_URL=<private S3 endpoint, or omit for AWS>
+S3_PUBLIC_ENDPOINT_URL=<browser-reachable S3 endpoint>
+S3_BUCKET=scoutdash-film
+S3_ACCESS_KEY_ID=<access key>
+S3_SECRET_ACCESS_KEY=<secret key>
+S3_REGION=us-east-1
+```
+
+The bucket must exist and allow browser CORS reads from the ScoutDash frontend. Docker Compose
+creates the local MinIO bucket automatically. `/health/capabilities` reports whether storage and
+video processing are configured before a coach uploads film.
 
 ## Current Scope
 

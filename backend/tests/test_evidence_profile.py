@@ -1,7 +1,4 @@
-import shutil
 import subprocess
-
-import pytest
 
 
 def _post(client, path, payload):
@@ -213,13 +210,17 @@ def test_generates_traceable_athlete_development_report_and_pdf(client):
 
 
 def test_video_processing_and_player_track_seed_workflow(client, tmp_path):
-    if shutil.which("ffmpeg") is None:
-        pytest.skip("ffmpeg is required for video processing workflow test")
+    from app.core.config import get_settings
+    from app.services.video import resolve_ffmpeg
+
+    capability_response = client.get("/health/capabilities")
+    assert capability_response.status_code == 200
+    assert capability_response.json()["video_processing"]["ready"] is True
 
     source_video = tmp_path / "game-film.mp4"
     subprocess.run(
         [
-            "ffmpeg",
+            resolve_ffmpeg(get_settings()),
             "-y",
             "-f",
             "lavfi",

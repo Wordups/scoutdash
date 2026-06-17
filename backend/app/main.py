@@ -25,6 +25,7 @@ from app.models import (  # noqa: F401
     VideoModel,
     VisionTrackModel,
 )
+from app.services.video import processing_capabilities
 
 
 settings = get_settings()
@@ -67,6 +68,16 @@ app.mount("/media", StaticFiles(directory=settings.local_upload_dir), name="medi
 @app.get("/health")
 def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/health/capabilities")
+def capability_healthcheck() -> dict[str, object]:
+    return {
+        "status": "ok",
+        "storage_backend": settings.storage_backend,
+        "storage_configured": settings.storage_backend == "local" or bool(settings.s3_bucket),
+        "video_processing": processing_capabilities(settings),
+    }
 
 
 app.include_router(organizations.router, prefix=settings.api_prefix)

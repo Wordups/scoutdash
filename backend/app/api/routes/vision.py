@@ -165,14 +165,16 @@ def _track_timeline(track: VisionTrackModel, db: Session) -> VisionTrackTimeline
                 frame_id=frame_id,
                 frame_number=item["frame_number"],
                 timestamp_seconds=item["timestamp_seconds"],
-                frame_url=_frame_url(frame) if frame else None,
+                frame_url=_frame_url(frame, video) if frame else None,
                 box=item["box"],
             )
         )
     return VisionTrackTimeline(
         track=VisionTrackRead.model_validate(track),
         athlete=AthleteRead.model_validate(athlete) if athlete else None,
-        video=VideoRead.model_validate(video),
+        video=VideoRead.model_validate(video).model_copy(
+            update={"storage_url": _storage_url(video.storage_backend, video.storage_key)}
+        ),
         moments=moments,
     )
 
@@ -183,12 +185,16 @@ def _box_from_click(x: float, y: float, width: float, height: float) -> dict[str
     return {"x": left, "y": top, "width": width, "height": height}
 
 
-def _frame_url(frame: VideoFrameModel | None) -> str | None:
+def _frame_url(frame: VideoFrameModel | None, video: VideoModel) -> str | None:
     if frame is None:
         return None
+
+    return _storage_url(video.storage_backend, frame.storage_key)
+
+
+def _storage_url(backend: str, storage_key: str) -> str | None:
     from app.core.config import get_settings
+    from app.services.storage import storage_url
 
     settings = get_settings()
-    if not settings.public_media_base_url:
-        return None
-    return f"{settings.public_media_base_url.rstrip('/')}/{frame.storage_key}"
+    return storage_url(settings, backend, storage_key)

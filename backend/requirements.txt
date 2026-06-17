@@ -7,5 +7,6 @@ python-multipart==0.0.20
 boto3==1.35.90
 reportlab==4.4.6
 pillow==11.3.0
+imageio-ffmpeg==0.6.0
 pytest==8.3.4
 httpx==0.28.1
