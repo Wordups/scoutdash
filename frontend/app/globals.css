@@ -33,6 +33,23 @@ video {
   background: #111827;
 }
 
+@media (max-width: 767px) {
+  button,
+  input,
+  select {
+    min-height: 44px;
+  }
+
+  textarea {
+    font-size: 16px;
+  }
+
+  input,
+  select {
+    font-size: 16px;
+  }
+}
+
 .field-empty {
   background:
     linear-gradient(90deg, rgba(15, 118, 110, 0.12) 1px, transparent 1px),
@@ -40,4 +57,3 @@ video {
     #eef3f1;
   background-size: 28px 28px;
 }
-

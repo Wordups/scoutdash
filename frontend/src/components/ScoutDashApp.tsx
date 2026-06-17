@@ -9,17 +9,21 @@ import {
   Download,
   Eye,
   FileText,
+  LayoutDashboard,
   Layers3,
   ListChecks,
+  Menu,
   Plus,
   RefreshCw,
   Save,
   Search,
+  Settings,
   Tags,
   Upload,
   UserRound,
   Users,
-  Video
+  Video,
+  X
 } from "lucide-react";
 import type { ChangeEvent, FormEvent, MouseEvent, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -45,7 +49,7 @@ import type {
   VisionTrackTimeline
 } from "@/types/scoutdash";
 
-type Tab = "review" | "directory" | "taxonomy" | "reports";
+type Tab = "dashboard" | "review" | "directory" | "taxonomy" | "reports";
 type Notice = { kind: "idle" | "loading" | "success" | "error"; message: string };
 
 const initialNotice: Notice = { kind: "idle", message: "" };
@@ -54,7 +58,8 @@ const workflowSteps = ["Upload Film", "Break Down Film", "Review Findings", "Rev
 export function ScoutDashApp() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  const [tab, setTab] = useState<Tab>("review");
+  const [tab, setTab] = useState<Tab>("dashboard");
+  const [isTabletNavOpen, setIsTabletNavOpen] = useState(false);
   const [notice, setNotice] = useState<Notice>(initialNotice);
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -130,6 +135,19 @@ export function ScoutDashApp() {
     if (!selectedAthleteId || !profile) return "Review Players";
     return "Generate Reports";
   }, [filteredEvidence.length, frames.length, profile, selectedAthleteId, selectedVideoId, trackTimeline]);
+  const navigationItems: Array<{ id: Tab; label: string; icon: ReactNode }> = [
+    { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard size={19} /> },
+    { id: "review", label: "Film Room", icon: <Video size={19} /> },
+    { id: "directory", label: "Setup", icon: <Settings size={19} /> },
+    { id: "taxonomy", label: "Tag Library", icon: <Tags size={19} /> },
+    { id: "reports", label: "Reports", icon: <FileText size={19} /> }
+  ];
+  const activeSectionLabel = navigationItems.find((item) => item.id === tab)?.label ?? "Dashboard";
+
+  function navigateTo(nextTab: Tab) {
+    setTab(nextTab);
+    setIsTabletNavOpen(false);
+  }
 
   useEffect(() => {
     void loadOrganizations();
@@ -632,20 +650,69 @@ export function ScoutDashApp() {
   }
 
   return (
-    <main className="min-h-screen px-4 py-4 text-ink sm:px-6 lg:px-8">
-      <header className="mx-auto flex max-w-7xl flex-col gap-4 border-b border-line pb-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-md bg-field text-white">
-              <Activity aria-hidden="true" size={22} />
-            </div>
-            <div>
-              <h1 className="text-2xl font-semibold">ScoutDash</h1>
-              <p className="text-sm text-slate-600">Break down film, review findings, and share evidence-based reports.</p>
-            </div>
-          </div>
+    <div className="min-h-screen text-ink">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col border-r border-white/10 bg-slate-950 px-3 py-4 text-white lg:flex">
+        <BrandMark />
+        <nav aria-label="Primary navigation" className="mt-8 space-y-1">
+          {navigationItems.map((item) => (
+            <SidebarNavButton active={tab === item.id} icon={item.icon} key={item.id} label={item.label} onClick={() => navigateTo(item.id)} />
+          ))}
+        </nav>
+        <div className="mt-auto rounded-md border border-white/10 bg-white/5 p-3 text-sm">
+          <div className="font-semibold">{selectedTeam?.name || "Select a team"}</div>
+          <div className="mt-1 text-xs text-slate-400">{selectedOrganization?.name || "Program setup"}</div>
         </div>
-        <div className="grid gap-2 sm:grid-cols-3 lg:w-[720px]">
+      </aside>
+
+      {isTabletNavOpen ? (
+        <button aria-label="Close navigation" className="fixed inset-0 z-40 hidden bg-slate-950/30 md:block lg:hidden" onClick={() => setIsTabletNavOpen(false)} type="button" />
+      ) : null}
+      <aside className={`fixed inset-y-0 left-0 z-50 hidden w-72 flex-col bg-slate-950 px-4 py-4 text-white shadow-2xl transition-transform md:flex lg:hidden ${isTabletNavOpen ? "translate-x-0" : "-translate-x-full"}`}>
+        <div className="flex items-center justify-between">
+          <BrandMark />
+          <button aria-label="Close navigation" className="flex h-11 w-11 items-center justify-center rounded-md text-slate-300 hover:bg-white/10 hover:text-white" onClick={() => setIsTabletNavOpen(false)} type="button">
+            <X size={20} />
+          </button>
+        </div>
+        <nav aria-label="Tablet navigation" className="mt-8 space-y-1">
+          {navigationItems.map((item) => (
+            <SidebarNavButton active={tab === item.id} icon={item.icon} key={item.id} label={item.label} onClick={() => navigateTo(item.id)} />
+          ))}
+        </nav>
+      </aside>
+
+      <div className="min-h-screen pb-24 lg:pl-60 lg:pb-0">
+        <header className="z-30 border-b border-line bg-white/95 backdrop-blur md:sticky md:top-0">
+          <div className="mx-auto flex max-w-[1480px] flex-col gap-3 px-4 py-3 sm:px-6 xl:px-8">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <button aria-label="Open navigation" className="hidden h-11 w-11 shrink-0 items-center justify-center rounded-md border border-line bg-white md:flex lg:hidden" onClick={() => setIsTabletNavOpen(true)} type="button">
+                  <Menu size={20} />
+                </button>
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-field text-white lg:hidden">
+                  <Activity aria-hidden="true" size={21} />
+                </div>
+                <div className="min-w-0">
+                  <div className="truncate text-lg font-semibold lg:text-xl">{activeSectionLabel}</div>
+                  <div className="truncate text-xs text-slate-500 sm:text-sm">{tab === "dashboard" ? "Your coaching workspace" : "ScoutDash"}</div>
+                </div>
+              </div>
+              <button
+                aria-label="Refresh workspace"
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium hover:border-review"
+                onClick={() => {
+                  void loadOrganizations();
+                  if (selectedOrgId) void loadOrganizationScope(selectedOrgId);
+                  if (selectedTeamId) void loadTeamScope(selectedTeamId);
+                }}
+                title="Refresh workspace"
+                type="button"
+              >
+                <RefreshCw aria-hidden="true" size={17} />
+                <span className="hidden sm:inline">Refresh</span>
+              </button>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-3">
           <SelectBox
             label="Program"
             value={selectedOrgId}
@@ -670,74 +737,113 @@ export function ScoutDashApp() {
             options={athletes.map((item) => ({ value: item.id, label: athleteLabel(item) }))}
             icon={<UserRound size={16} />}
           />
-        </div>
-      </header>
-
-      <section className="mx-auto mt-4 max-w-7xl">
-        <CoachWorkflow currentStep={currentWorkflowStep} />
-      </section>
-
-      <section className="mx-auto mt-4 max-w-7xl">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex rounded-md border border-line bg-white p-1 shadow-panel">
-            <TabButton active={tab === "review"} icon={<Video size={16} />} label="Film Room" onClick={() => setTab("review")} />
-            <TabButton
-              active={tab === "directory"}
-              icon={<Users size={16} />}
-              label="Roster"
-              onClick={() => setTab("directory")}
-            />
-            <TabButton
-              active={tab === "taxonomy"}
-              icon={<Tags size={16} />}
-              label="Tag Library"
-              onClick={() => setTab("taxonomy")}
-            />
-            <TabButton active={tab === "reports"} icon={<FileText size={16} />} label="Reports" onClick={() => setTab("reports")} />
+            </div>
           </div>
+        </header>
+
+        <main className="mx-auto max-w-[1480px] px-4 py-4 sm:px-6 xl:px-8">
+          {notice.message ? (
+            <div className={`mb-4 flex items-start gap-2 rounded-md border px-3 py-2 text-sm ${notice.kind === "error" ? "border-red-200 bg-red-50 text-red-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
+              {notice.kind === "error" ? <AlertTriangle className="mt-0.5 shrink-0" size={16} /> : <ListChecks className="mt-0.5 shrink-0" size={16} />}
+              {notice.message}
+            </div>
+          ) : null}
+          {tab === "dashboard" ? renderDashboard() : null}
+          {tab === "review" ? renderReview() : null}
+          {tab === "directory" ? renderDirectory() : null}
+          {tab === "taxonomy" ? renderTaxonomy() : null}
+          {tab === "reports" ? renderReports() : null}
+        </main>
+      </div>
+
+      <nav aria-label="Mobile navigation" className="fixed inset-x-0 bottom-0 z-50 grid grid-cols-5 border-t border-line bg-white px-1 pb-[max(0.35rem,env(safe-area-inset-bottom))] pt-1 shadow-[0_-8px_24px_rgba(31,41,51,0.08)] md:hidden">
+        {navigationItems.map((item) => (
           <button
-            className="inline-flex h-10 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium shadow-panel hover:border-review"
-            onClick={() => {
-              void loadOrganizations();
-              if (selectedOrgId) void loadOrganizationScope(selectedOrgId);
-              if (selectedTeamId) void loadTeamScope(selectedTeamId);
-            }}
+            aria-current={tab === item.id ? "page" : undefined}
+            className={`flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 rounded-md px-1 text-[11px] font-semibold ${tab === item.id ? "bg-teal-50 text-field" : "text-slate-500"}`}
+            key={item.id}
+            onClick={() => navigateTo(item.id)}
             type="button"
           >
-            <RefreshCw aria-hidden="true" size={16} />
-            Refresh
+            {item.icon}
+            <span className="w-full truncate">{item.label}</span>
           </button>
-        </div>
-
-        {notice.message ? (
-          <div
-            className={`mt-3 flex items-center gap-2 rounded-md border px-3 py-2 text-sm ${
-              notice.kind === "error"
-                ? "border-red-200 bg-red-50 text-red-800"
-                : "border-emerald-200 bg-emerald-50 text-emerald-800"
-            }`}
-          >
-            {notice.kind === "error" ? <AlertTriangle size={16} /> : <ListChecks size={16} />}
-            {notice.message}
-          </div>
-        ) : null}
-      </section>
-
-      <section className="mx-auto mt-4 max-w-7xl">
-        {tab === "review" ? renderReview() : null}
-        {tab === "directory" ? renderDirectory() : null}
-        {tab === "taxonomy" ? renderTaxonomy() : null}
-        {tab === "reports" ? renderReports() : null}
-      </section>
-    </main>
+        ))}
+      </nav>
+    </div>
   );
+
+  function renderDashboard() {
+    return (
+      <div className="space-y-4">
+        <CoachWorkflow currentStep={currentWorkflowStep} />
+        <div className="grid gap-4 md:grid-cols-2">
+          <section className="rounded-md border border-line bg-white p-4 shadow-panel">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold uppercase text-slate-500">Continue coaching</div>
+                <h2 className="mt-1 text-lg font-semibold">{selectedVideo?.title || "Choose your next film"}</h2>
+                <p className="mt-1 text-sm text-slate-600">Next step: {currentWorkflowStep}</p>
+              </div>
+              <Video className="shrink-0 text-field" size={22} />
+            </div>
+            <button className="mt-5 inline-flex h-11 w-full items-center justify-center gap-2 rounded-md bg-field px-4 text-sm font-semibold text-white hover:bg-teal-800" onClick={() => navigateTo("review")} type="button">
+              <Video size={17} /> Open Film Room
+            </button>
+          </section>
+
+          <section className="rounded-md border border-line bg-white p-4 shadow-panel">
+            <div className="text-xs font-semibold uppercase text-slate-500">Team workspace</div>
+            <h2 className="mt-1 text-lg font-semibold">{selectedTeam?.name || "No team selected"}</h2>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <Metric label="Athletes" value={athletes.length.toLocaleString()} />
+              <Metric label="Films" value={videos.length.toLocaleString()} />
+              <Metric label="Evidence" value={evidence.length.toLocaleString()} />
+              <Metric label="Reports" value={reports.length.toLocaleString()} />
+            </div>
+          </section>
+
+          <section className="rounded-md border border-line bg-white p-4 shadow-panel">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h2 className="flex items-center gap-2 text-base font-semibold"><ListChecks size={18} /> Recent Evidence</h2>
+              <button className="text-sm font-semibold text-review" onClick={() => navigateTo("review")} type="button">Review film</button>
+            </div>
+            <div className="space-y-2">
+              {filteredEvidence.length ? filteredEvidence.slice(0, 4).map((item) => (
+                <div className="flex items-center justify-between gap-3 rounded-md border border-line px-3 py-2 text-sm" key={item.id}>
+                  <div className="min-w-0">
+                    <div className="truncate font-semibold">{item.tag_name}</div>
+                    <div className="truncate text-xs text-slate-500">{item.athlete_name}</div>
+                  </div>
+                  <span className="shrink-0 text-xs font-semibold text-slate-600">{formatTime(item.timestamp_seconds)}</span>
+                </div>
+              )) : <EmptyState label="Evidence from film review will appear here." />}
+            </div>
+          </section>
+
+          <section className="rounded-md border border-line bg-white p-4 shadow-panel">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h2 className="flex items-center gap-2 text-base font-semibold"><FileText size={18} /> Athlete Reports</h2>
+              <button className="text-sm font-semibold text-review" onClick={() => navigateTo("reports")} type="button">Open reports</button>
+            </div>
+            {activeReport ? (
+              <div className="rounded-md border border-line bg-slate-50 p-3">
+                <div className="font-semibold">{activeReport.title}</div>
+                <div className="mt-1 text-sm text-slate-600">Built from {activeReport.report_data.evidence_count} saved evidence clips.</div>
+              </div>
+            ) : <EmptyState label="Generate a report after reviewing film evidence." />}
+          </section>
+        </div>
+      </div>
+    );
+  }
 
   function renderReview() {
     return (
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.95fr)]">
         <div className="space-y-4">
           <section className="rounded-md border border-line bg-white p-4 shadow-panel">
-            <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div className="mb-3 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
               <SelectBox
                 label="Film"
                 value={selectedVideoId}
@@ -745,7 +851,7 @@ export function ScoutDashApp() {
                 options={videos.map((item) => ({ value: item.id, label: item.title }))}
                 icon={<Video size={16} />}
               />
-              <form className="grid gap-2 md:grid-cols-[minmax(160px,1fr)_minmax(180px,1fr)_auto]" onSubmit={uploadVideo}>
+              <form className="hidden gap-2 md:grid lg:grid-cols-[minmax(160px,1fr)_minmax(180px,1fr)_auto]" onSubmit={uploadVideo}>
                 <input
                   className="h-10 rounded-md border border-line px-3 text-sm outline-none focus:border-review"
                   onChange={(event) => setUploadTitle(event.target.value)}
@@ -768,7 +874,7 @@ export function ScoutDashApp() {
                 </button>
               </form>
             </div>
-            <form className="mb-3 grid gap-2 md:grid-cols-[minmax(160px,0.8fr)_minmax(220px,1.4fr)_auto]" onSubmit={importVideoUrl}>
+            <form className="mb-3 hidden gap-2 md:grid lg:grid-cols-[minmax(160px,0.8fr)_minmax(220px,1.4fr)_auto]" onSubmit={importVideoUrl}>
               <input
                 className="h-10 rounded-md border border-line px-3 text-sm outline-none focus:border-review"
                 onChange={(event) => setUrlImportForm((value) => ({ ...value, title: event.target.value }))}
@@ -807,7 +913,30 @@ export function ScoutDashApp() {
                 </div>
               </div>
             )}
-            <div className="mt-3 grid gap-2 text-sm text-slate-700 sm:grid-cols-4">
+            <details className="mt-3 rounded-md border border-line bg-slate-50 md:hidden">
+              <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-3 text-sm font-semibold">
+                <Upload size={16} /> Add film
+              </summary>
+              <div className="space-y-3 border-t border-line p-3">
+                <form className="grid gap-2" onSubmit={uploadVideo}>
+                  <input className="rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-review" onChange={(event) => setUploadTitle(event.target.value)} placeholder="Film title" value={uploadTitle} />
+                  <input className="rounded-md border border-line bg-white px-3 text-sm file:mr-2 file:rounded-md file:border-0 file:bg-slate-100 file:px-2 file:py-1.5" onChange={onUploadFileChange} type="file" accept="video/*" />
+                  <button className="inline-flex items-center justify-center gap-2 rounded-md bg-field px-3 text-sm font-semibold text-white disabled:bg-slate-300" disabled={!selectedOrgId || !selectedTeamId || !uploadFile} type="submit">
+                    <Upload size={16} /> Upload Film
+                  </button>
+                </form>
+                <div className="border-t border-line pt-3">
+                  <form className="grid gap-2" onSubmit={importVideoUrl}>
+                    <input className="rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-review" onChange={(event) => setUrlImportForm((value) => ({ ...value, title: event.target.value }))} placeholder="Film title" value={urlImportForm.title} />
+                    <input className="rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-review" onChange={(event) => setUrlImportForm((value) => ({ ...value, source_url: event.target.value }))} placeholder="Paste direct video URL" type="url" value={urlImportForm.source_url} />
+                    <button className="inline-flex items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold disabled:text-slate-400" disabled={!selectedOrgId || !selectedTeamId || !urlImportForm.source_url} type="submit">
+                      <Plus size={16} /> Add Film URL
+                    </button>
+                  </form>
+                </div>
+              </div>
+            </details>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-slate-700 sm:grid-cols-4">
               <Metric label="Time" value={formatTime(currentTime)} />
               <Metric label="Duration" value={formatTime(selectedVideo?.duration_seconds ?? 0)} />
               <Metric label="Film Readiness" value={selectedVideo?.fps ? "Ready" : "Needs upload"} />
@@ -820,7 +949,7 @@ export function ScoutDashApp() {
                     <Eye aria-hidden="true" size={16} />
                     Film Breakdown
                   </h2>
-                  <div className="mt-2 grid gap-2 text-sm text-slate-700 sm:grid-cols-2">
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-sm text-slate-700">
                     <Metric label="Film Moments" value={frames.length.toLocaleString()} />
                     <Metric label="Player Views" value={tracks.length.toLocaleString()} />
                   </div>
@@ -985,7 +1114,7 @@ export function ScoutDashApp() {
                 value={tagForm.notes}
               />
               <button
-                className="inline-flex h-10 w-fit items-center gap-2 rounded-md bg-review px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:bg-slate-300"
+                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-md bg-review px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:bg-slate-300 sm:w-fit"
                 disabled={!selectedVideoId || !tagForm.tag_id || !(tagForm.athlete_id || selectedAthleteId)}
                 type="submit"
               >
@@ -1477,9 +1606,18 @@ function CoachWorkflow({ currentStep }: { currentStep: (typeof workflowSteps)[nu
           <h2 className="text-sm font-semibold text-ink">Coach workflow</h2>
           <p className="text-xs text-slate-600">Break down film first. Player evidence and reports come from that work.</p>
         </div>
-        <span className="text-xs font-semibold uppercase text-slate-500">Current step: {currentStep}</span>
+        <span className="hidden text-xs font-semibold uppercase text-slate-500 md:inline">Current step: {currentStep}</span>
       </div>
-      <div className="grid gap-2 md:grid-cols-5">
+      <div className="flex items-center gap-3 rounded-md border border-review bg-blue-50 px-3 py-3 text-sm text-review md:hidden">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-review text-xs font-semibold text-white">
+          {workflowSteps.indexOf(currentStep) + 1}
+        </span>
+        <div>
+          <div className="text-xs font-semibold uppercase text-blue-600">Do this next</div>
+          <div className="font-semibold">{currentStep}</div>
+        </div>
+      </div>
+      <div className="hidden gap-2 md:grid md:grid-cols-5">
         {workflowSteps.map((step, index) => {
           const active = step === currentStep;
           return (
@@ -1518,13 +1656,13 @@ function ProfilePanel({
 }) {
   return (
     <section className="rounded-md border border-line bg-white p-4 shadow-panel">
-      <div className="mb-3 flex items-center justify-between gap-3">
+      <div className="mb-3 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
         <h2 className="flex items-center gap-2 text-base font-semibold">
           <UserRound aria-hidden="true" size={18} />
           Athlete Development Profile
         </h2>
         <button
-          className="inline-flex h-9 items-center gap-2 rounded-md bg-ink px-3 text-sm font-semibold text-white hover:bg-slate-700 disabled:bg-slate-300"
+          className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-md bg-ink px-3 text-sm font-semibold text-white hover:bg-slate-700 disabled:bg-slate-300 sm:h-9 sm:w-auto"
           disabled={!profile || isGeneratingReport}
           onClick={onGenerateReport}
           type="button"
@@ -1574,7 +1712,7 @@ function ReportPanel({
           Reports
         </h2>
         <button
-          className="inline-flex h-9 items-center gap-2 rounded-md border border-line px-3 text-sm font-medium hover:border-review disabled:text-slate-400"
+          className="inline-flex h-11 shrink-0 items-center gap-2 rounded-md border border-line px-3 text-sm font-medium hover:border-review disabled:text-slate-400 sm:h-9"
           disabled={!activeReport}
           onClick={() => activeReport && onDownloadReport(activeReport.id)}
           type="button"
@@ -1758,7 +1896,21 @@ function SelectBox({
   );
 }
 
-function TabButton({
+function BrandMark() {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-field text-white">
+        <Activity aria-hidden="true" size={21} />
+      </div>
+      <div>
+        <div className="text-lg font-semibold">ScoutDash</div>
+        <div className="text-xs text-slate-400">Film breakdown for coaches</div>
+      </div>
+    </div>
+  );
+}
+
+function SidebarNavButton({
   active,
   icon,
   label,
@@ -1771,8 +1923,9 @@ function TabButton({
 }) {
   return (
     <button
-      className={`inline-flex h-9 items-center gap-2 rounded px-3 text-sm font-semibold ${
-        active ? "bg-ink text-white" : "text-slate-600 hover:bg-slate-100"
+      aria-current={active ? "page" : undefined}
+      className={`flex h-11 w-full items-center gap-3 rounded-md px-3 text-sm font-semibold ${
+        active ? "bg-field text-white" : "text-slate-300 hover:bg-white/10 hover:text-white"
       }`}
       onClick={onClick}
       type="button"
