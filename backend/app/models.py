@@ -37,6 +37,9 @@ class OrganizationModel(TimestampMixin, Base):
     evidence_tags: Mapped[list[EvidenceTagModel]] = relationship(
         back_populates="organization", cascade="all, delete-orphan"
     )
+    athlete_reports: Mapped[list[AthleteReportModel]] = relationship(
+        back_populates="organization", cascade="all, delete-orphan"
+    )
 
 
 class TeamModel(TimestampMixin, Base):
@@ -78,6 +81,7 @@ class AthleteModel(TimestampMixin, Base):
     evidence_tags: Mapped[list[EvidenceTagModel]] = relationship(back_populates="athlete")
     notes: Mapped[list[NoteModel]] = relationship(back_populates="athlete")
     vision_tracks: Mapped[list[VisionTrackModel]] = relationship(back_populates="athlete")
+    reports: Mapped[list[AthleteReportModel]] = relationship(back_populates="athlete")
 
 
 class EventModel(TimestampMixin, Base):
@@ -125,6 +129,7 @@ class VideoModel(TimestampMixin, Base):
     event: Mapped[EventModel | None] = relationship(back_populates="videos")
     clips: Mapped[list[ClipModel]] = relationship(back_populates="video", cascade="all, delete-orphan")
     evidence_tags: Mapped[list[EvidenceTagModel]] = relationship(back_populates="video")
+    frames: Mapped[list[VideoFrameModel]] = relationship(back_populates="video", cascade="all, delete-orphan")
     vision_tracks: Mapped[list[VisionTrackModel]] = relationship(back_populates="video")
 
 
@@ -251,3 +256,39 @@ class VisionTrackModel(TimestampMixin, Base):
     video: Mapped[VideoModel] = relationship(back_populates="vision_tracks")
     athlete: Mapped[AthleteModel | None] = relationship(back_populates="vision_tracks")
 
+
+class VideoFrameModel(TimestampMixin, Base):
+    __tablename__ = "video_frames"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    video_id: Mapped[str] = mapped_column(ForeignKey("videos.id", ondelete="CASCADE"), nullable=False, index=True)
+    frame_number: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    timestamp_seconds: Mapped[float] = mapped_column(Float, nullable=False, index=True)
+    storage_key: Mapped[str] = mapped_column(String(520), nullable=False)
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
+
+    video: Mapped[VideoModel] = relationship(back_populates="frames")
+
+
+class AthleteReportModel(TimestampMixin, Base):
+    __tablename__ = "athlete_reports"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    team_id: Mapped[str] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    athlete_id: Mapped[str] = mapped_column(
+        ForeignKey("athletes.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    report_type: Mapped[str] = mapped_column(String(80), default="athlete_development")
+    status: Mapped[str] = mapped_column(String(40), default="generated")
+    generated_by: Mapped[str | None] = mapped_column(String(120))
+    report_data: Mapped[dict] = mapped_column(JSON, default=dict)
+    evidence_tag_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    note_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+    organization: Mapped[OrganizationModel] = relationship(back_populates="athlete_reports")
+    athlete: Mapped[AthleteModel] = relationship(back_populates="reports")

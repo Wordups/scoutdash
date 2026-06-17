@@ -2,7 +2,19 @@ from __future__ import annotations
 
 import json
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
+
+from PIL import Image
+
+
+@dataclass(frozen=True)
+class ExtractedFrame:
+    frame_number: int
+    timestamp_seconds: float
+    path: Path
+    width: int | None
+    height: int | None
 
 
 def probe_video(path: Path) -> dict[str, float | int | None]:
@@ -31,6 +43,50 @@ def probe_video(path: Path) -> dict[str, float | int | None]:
     return {"duration_seconds": duration, "fps": fps, "frame_count": frame_count}
 
 
+def extract_sampled_frames(
+    video_path: Path,
+    output_dir: Path,
+    sample_fps: float = 1.0,
+    max_frames: int = 240,
+) -> list[ExtractedFrame]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    pattern = output_dir / "frame_%06d.jpg"
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video_path),
+        "-vf",
+        f"fps={sample_fps},scale=640:-1",
+        "-frames:v",
+        str(max_frames),
+        "-q:v",
+        "2",
+        str(pattern),
+    ]
+    subprocess.run(command, capture_output=True, check=True, text=True, timeout=120)
+
+    frames: list[ExtractedFrame] = []
+    for index, path in enumerate(sorted(output_dir.glob("frame_*.jpg"))):
+        width: int | None = None
+        height: int | None = None
+        try:
+            with Image.open(path) as image:
+                width, height = image.size
+        except OSError:
+            pass
+        frames.append(
+            ExtractedFrame(
+                frame_number=index,
+                timestamp_seconds=index / sample_fps,
+                path=path,
+                width=width,
+                height=height,
+            )
+        )
+    return frames
+
+
 def _parse_rate(value: str | None) -> float | None:
     if not value or value == "0/0":
         return None
@@ -56,4 +112,3 @@ def _int_or_none(value: str | int | None) -> int | None:
         return None if value is None else int(value)
     except ValueError:
         return None
-

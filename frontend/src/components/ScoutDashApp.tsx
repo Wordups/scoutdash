@@ -6,7 +6,9 @@ import {
   Calendar,
   ClipboardList,
   Crosshair,
+  Download,
   Eye,
+  FileText,
   Layers3,
   ListChecks,
   Plus,
@@ -19,13 +21,14 @@ import {
   Users,
   Video
 } from "lucide-react";
-import type { ChangeEvent, FormEvent, ReactNode } from "react";
+import type { ChangeEvent, FormEvent, MouseEvent, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { apiGet, apiPost, apiUpload, mediaUrl } from "@/lib/api";
+import { apiGet, apiPost, apiUpload, apiUrl, mediaUrl } from "@/lib/api";
 import type {
   Athlete,
   AthleteProfile,
+  AthleteReport,
   Category,
   Event,
   EvidenceTag,
@@ -33,8 +36,13 @@ import type {
   Organization,
   TagDefinition,
   Team,
+  TrackTimelineMoment,
   VideoAsset,
-  VisionTrack
+  VideoFrame,
+  VideoProcessRead,
+  VisionTrack,
+  ReportEvidenceReference,
+  VisionTrackTimeline
 } from "@/types/scoutdash";
 
 type Tab = "review" | "directory" | "taxonomy" | "vision";
@@ -56,7 +64,16 @@ export function ScoutDashApp() {
   const [tags, setTags] = useState<TagDefinition[]>([]);
   const [evidence, setEvidence] = useState<EvidenceTag[]>([]);
   const [profile, setProfile] = useState<AthleteProfile | null>(null);
+  const [reports, setReports] = useState<AthleteReport[]>([]);
+  const [activeReport, setActiveReport] = useState<AthleteReport | null>(null);
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [tracks, setTracks] = useState<VisionTrack[]>([]);
+  const [frames, setFrames] = useState<VideoFrame[]>([]);
+  const [selectedFrameId, setSelectedFrameId] = useState("");
+  const [selectedPoint, setSelectedPoint] = useState<{ x: number; y: number } | null>(null);
+  const [trackTimeline, setTrackTimeline] = useState<VisionTrackTimeline | null>(null);
+  const [isProcessingVideo, setIsProcessingVideo] = useState(false);
+  const [isCreatingTrack, setIsCreatingTrack] = useState(false);
 
   const [selectedOrgId, setSelectedOrgId] = useState("");
   const [selectedTeamId, setSelectedTeamId] = useState("");
@@ -73,6 +90,7 @@ export function ScoutDashApp() {
   const [tagDefinitionForm, setTagDefinitionForm] = useState({ category_id: "", name: "", description: "" });
   const [uploadTitle, setUploadTitle] = useState("");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [urlImportForm, setUrlImportForm] = useState({ title: "", source_url: "" });
   const [tagForm, setTagForm] = useState({
     athlete_id: "",
     category_id: "",
@@ -84,12 +102,15 @@ export function ScoutDashApp() {
     notes: ""
   });
   const [noteForm, setNoteForm] = useState({ author_name: "", body: "" });
-  const [trackForm, setTrackForm] = useState({ track_label: "", frame_start: "0", frame_end: "0" });
 
   const selectedOrganization = organizations.find((item) => item.id === selectedOrgId) ?? null;
   const selectedTeam = teams.find((item) => item.id === selectedTeamId) ?? null;
   const selectedAthlete = athletes.find((item) => item.id === selectedAthleteId) ?? null;
   const selectedVideo = videos.find((item) => item.id === selectedVideoId) ?? null;
+  const selectedFrame = useMemo(
+    () => frames.find((item) => item.id === selectedFrameId) ?? frames[0] ?? null,
+    [frames, selectedFrameId]
+  );
   const tagsForCategory = useMemo(
     () => tags.filter((item) => item.category_id === tagForm.category_id),
     [tagForm.category_id, tags]
@@ -119,16 +140,27 @@ export function ScoutDashApp() {
   useEffect(() => {
     if (!selectedAthleteId) {
       setProfile(null);
+      setReports([]);
+      setActiveReport(null);
       return;
     }
     setTagForm((value) => ({ ...value, athlete_id: selectedAthleteId }));
     void loadAthleteProfile(selectedAthleteId);
+    void loadReports(selectedAthleteId);
   }, [selectedAthleteId]);
 
   useEffect(() => {
-    if (!selectedVideoId) return;
+    if (!selectedVideoId) {
+      setFrames([]);
+      setSelectedFrameId("");
+      setSelectedPoint(null);
+      setTracks([]);
+      setTrackTimeline(null);
+      return;
+    }
     void loadEvidence();
-    void loadTracks();
+    void loadFrames(selectedVideoId);
+    void loadTracks(selectedVideoId);
   }, [selectedVideoId]);
 
   useEffect(() => {
@@ -225,11 +257,54 @@ export function ScoutDashApp() {
     }
   }
 
-  async function loadTracks() {
-    if (!selectedVideoId) return;
+  async function loadReports(athleteId: string) {
     try {
-      const data = await apiGet<VisionTrack[]>(`/vision/tracks?video_id=${selectedVideoId}`);
+      const data = await apiGet<AthleteReport[]>(`/athletes/${athleteId}/reports`);
+      setReports(data);
+      setActiveReport(data[0] ?? null);
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  async function loadFrames(videoId = selectedVideoId) {
+    if (!videoId) return;
+    try {
+      const data = await apiGet<VideoFrame[]>(`/videos/${videoId}/frames`);
+      setFrames(data);
+      setSelectedFrameId((current) => (data.some((item) => item.id === current) ? current : data[0]?.id ?? ""));
+      if (!data.length) {
+        setSelectedPoint(null);
+        setTrackTimeline(null);
+      }
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  async function loadTrackTimeline(trackId: string) {
+    try {
+      const data = await apiGet<VisionTrackTimeline>(`/vision/tracks/${trackId}/timeline`);
+      setTrackTimeline(data);
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  async function loadTracks(videoId = selectedVideoId) {
+    if (!videoId) return;
+    try {
+      const data = await apiGet<VisionTrack[]>(`/vision/tracks?video_id=${videoId}`);
       setTracks(data);
+      const activeTrackId =
+        trackTimeline?.video.id === videoId && data.some((item) => item.id === trackTimeline.track.id)
+          ? trackTimeline.track.id
+          : data[0]?.id;
+      if (activeTrackId) {
+        await loadTrackTimeline(activeTrackId);
+      } else {
+        setTrackTimeline(null);
+      }
     } catch (error) {
       showError(error);
     }
@@ -358,6 +433,50 @@ export function ScoutDashApp() {
     }
   }
 
+  async function importVideoUrl(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedOrgId || !selectedTeamId || !urlImportForm.source_url) return;
+    try {
+      const created = await apiPost<VideoAsset>(
+        "/videos/from-url",
+        cleanPayload({
+          organization_id: selectedOrgId,
+          team_id: selectedTeamId,
+          event_id: selectedEventId || null,
+          title: urlImportForm.title || "Imported film",
+          source_url: urlImportForm.source_url
+        })
+      );
+      setVideos((items) => [created, ...items]);
+      setSelectedVideoId(created.id);
+      setUrlImportForm({ title: "", source_url: "" });
+      showSuccess("Film imported");
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  async function processSelectedVideo() {
+    if (!selectedVideoId) return;
+    try {
+      setIsProcessingVideo(true);
+      const processed = await apiPost<VideoProcessRead>(`/videos/${selectedVideoId}/process`, {
+        sample_fps: 1,
+        max_frames: 240
+      });
+      setVideos((items) => items.map((item) => (item.id === processed.video.id ? processed.video : item)));
+      setFrames(processed.frames);
+      setSelectedFrameId(processed.frames[0]?.id ?? "");
+      setSelectedPoint(null);
+      setTrackTimeline(null);
+      showSuccess(`${processed.frame_count_extracted} frames ready for identification`);
+    } catch (error) {
+      showError(error);
+    } finally {
+      setIsProcessingVideo(false);
+    }
+  }
+
   async function saveEvidence(event: FormEvent) {
     event.preventDefault();
     if (!selectedOrgId || !selectedTeamId || !selectedVideoId) return;
@@ -403,33 +522,73 @@ export function ScoutDashApp() {
     }
   }
 
-  async function saveTrack(event: FormEvent) {
-    event.preventDefault();
-    if (!selectedOrgId || !selectedVideoId) return;
-    const frameStart = Math.max(0, Math.floor(numeric(trackForm.frame_start, 0)));
-    const frameEnd = Math.max(frameStart, Math.floor(numeric(trackForm.frame_end, frameStart)));
+  async function generateReport() {
+    if (!selectedAthleteId) return;
     try {
-      const created = await apiPost<VisionTrack>(
-        "/vision/tracks",
-        cleanPayload({
-          organization_id: selectedOrgId,
-          video_id: selectedVideoId,
-          athlete_id: selectedAthleteId || null,
-          track_label: trackForm.track_label,
-          frame_start: frameStart,
-          frame_end: frameEnd,
-          source: "manual_sam3",
-          status: "draft",
-          bounding_data: { manual_time_seconds: currentTime, frames: [] },
-          segmentation_metadata: { model: "sam3", status: "pending_manual_segmentation" }
-        })
-      );
-      setTracks((items) => [created, ...items]);
-      setTrackForm({ track_label: "", frame_start: "0", frame_end: "0" });
-      showSuccess("Track saved");
+      setIsGeneratingReport(true);
+      const created = await apiPost<AthleteReport>(`/athletes/${selectedAthleteId}/reports`, {
+        generated_by: "Coach"
+      });
+      setReports((items) => [created, ...items]);
+      setActiveReport(created);
+      showSuccess("Development report generated");
     } catch (error) {
       showError(error);
+    } finally {
+      setIsGeneratingReport(false);
     }
+  }
+
+  function downloadReport(reportId: string) {
+    window.open(apiUrl(`/reports/${reportId}/pdf`), "_blank", "noopener,noreferrer");
+  }
+
+  async function createTrackSeed() {
+    if (!selectedVideoId || !selectedFrame || !selectedPoint) return;
+    try {
+      setIsCreatingTrack(true);
+      const timeline = await apiPost<VisionTrackTimeline>(
+        "/vision/track-seeds",
+        cleanPayload({
+          video_id: selectedVideoId,
+          athlete_id: selectedAthleteId || null,
+          frame_id: selectedFrame.id,
+          x_ratio: selectedPoint.x,
+          y_ratio: selectedPoint.y,
+          track_label: selectedAthlete ? athleteLabel(selectedAthlete) : "Coach-selected player"
+        })
+      );
+      setTrackTimeline(timeline);
+      setTracks((items) => [timeline.track, ...items.filter((item) => item.id !== timeline.track.id)]);
+      showSuccess("Player track seed saved");
+    } catch (error) {
+      showError(error);
+    } finally {
+      setIsCreatingTrack(false);
+    }
+  }
+
+  function selectFramePoint(frame: VideoFrame, event: MouseEvent<HTMLButtonElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+    setSelectedFrameId(frame.id);
+    setSelectedPoint({ x, y });
+  }
+
+  function useTimelineMomentForTag(moment: TrackTimelineMoment) {
+    const clipStart = Math.max(0, moment.timestamp_seconds - 3);
+    const clipEnd = moment.timestamp_seconds + 3;
+    setCurrentTime(moment.timestamp_seconds);
+    setTagForm((value) => ({
+      ...value,
+      athlete_id: trackTimeline?.track.athlete_id ?? selectedAthleteId,
+      timestamp_seconds: moment.timestamp_seconds.toFixed(2),
+      clip_start_seconds: clipStart.toFixed(2),
+      clip_end_seconds: clipEnd.toFixed(2)
+    }));
+    setTab("review");
+    showSuccess("Timeline moment ready for evidence tagging");
   }
 
   function jumpTo(seconds: number) {
@@ -590,6 +749,29 @@ export function ScoutDashApp() {
                 </button>
               </form>
             </div>
+            <form className="mb-3 grid gap-2 md:grid-cols-[minmax(160px,0.8fr)_minmax(220px,1.4fr)_auto]" onSubmit={importVideoUrl}>
+              <input
+                className="h-10 rounded-md border border-line px-3 text-sm outline-none focus:border-review"
+                onChange={(event) => setUrlImportForm((value) => ({ ...value, title: event.target.value }))}
+                placeholder="URL film title"
+                value={urlImportForm.title}
+              />
+              <input
+                className="h-10 rounded-md border border-line px-3 text-sm outline-none focus:border-review"
+                onChange={(event) => setUrlImportForm((value) => ({ ...value, source_url: event.target.value }))}
+                placeholder="Paste direct video URL"
+                type="url"
+                value={urlImportForm.source_url}
+              />
+              <button
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold text-ink hover:border-review disabled:text-slate-400"
+                disabled={!selectedOrgId || !selectedTeamId || !urlImportForm.source_url}
+                type="submit"
+              >
+                <Plus aria-hidden="true" size={16} />
+                Import
+              </button>
+            </form>
             {selectedVideo?.storage_url ? (
               <video
                 className="aspect-video w-full rounded-md"
@@ -731,7 +913,18 @@ export function ScoutDashApp() {
         </div>
 
         <aside className="space-y-4">
-          <ProfilePanel profile={profile} selectedAthlete={selectedAthlete} />
+          <ProfilePanel
+            isGeneratingReport={isGeneratingReport}
+            onGenerateReport={generateReport}
+            profile={profile}
+            selectedAthlete={selectedAthlete}
+          />
+          <ReportPanel
+            activeReport={activeReport}
+            onDownloadReport={downloadReport}
+            onSelectReport={setActiveReport}
+            reports={reports}
+          />
           <section className="rounded-md border border-line bg-white p-4 shadow-panel">
             <h2 className="mb-3 flex items-center gap-2 text-base font-semibold">
               <ListChecks aria-hidden="true" size={18} />
@@ -974,60 +1167,179 @@ export function ScoutDashApp() {
   }
 
   function renderVision() {
+    const selectedFrameUrl = selectedFrame?.frame_url ? mediaUrl(selectedFrame.frame_url) : "";
+    const activeTrackStatus = trackTimeline?.track.segmentation_metadata.status;
+
     return (
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)]">
         <section className="rounded-md border border-line bg-white p-4 shadow-panel">
-          <h2 className="mb-3 flex items-center gap-2 text-base font-semibold">
-            <Eye aria-hidden="true" size={18} />
-            Athlete Tracks
-          </h2>
-          <form className="grid gap-3" onSubmit={saveTrack}>
-            <TextInput
-              label="Track Label"
-              onChange={(value) => setTrackForm((item) => ({ ...item, track_label: value }))}
-              value={trackForm.track_label}
+          <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <SelectBox
+              label="Film"
+              value={selectedVideoId}
+              onChange={setSelectedVideoId}
+              options={videos.map((item) => ({ value: item.id, label: item.title }))}
+              icon={<Video size={16} />}
             />
-            <div className="grid gap-3 sm:grid-cols-2">
-              <TextInput
-                label="Frame Start"
-                onChange={(value) => setTrackForm((item) => ({ ...item, frame_start: value }))}
-                value={trackForm.frame_start}
+            <button
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-field px-4 text-sm font-semibold text-white hover:bg-teal-800 disabled:bg-slate-300"
+              disabled={!selectedVideoId || isProcessingVideo}
+              onClick={processSelectedVideo}
+              type="button"
+            >
+              <RefreshCw aria-hidden="true" size={16} />
+              {isProcessingVideo ? "Processing" : "Process Video"}
+            </button>
+          </div>
+          <div className="mb-4 grid gap-2 text-sm text-slate-700 sm:grid-cols-4">
+            <Metric label="Frames" value={frames.length.toLocaleString()} />
+            <Metric label="Athlete" value={selectedAthlete ? athleteLabel(selectedAthlete) : "Unassigned"} />
+            <Metric label="Selected" value={selectedFrame ? formatTime(selectedFrame.timestamp_seconds) : "None"} />
+            <Metric label="Tracks" value={tracks.length.toLocaleString()} />
+          </div>
+
+          {selectedFrame ? (
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
+              <button
+                className="relative aspect-video overflow-hidden rounded-md border border-line bg-slate-100 text-left"
+                onClick={(event) => selectFramePoint(selectedFrame, event)}
+                type="button"
+              >
+                {selectedFrameUrl ? (
+                  <img alt="" className="h-full w-full object-contain" src={selectedFrameUrl} />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-sm text-slate-500">Frame unavailable</div>
+                )}
+                {selectedPoint ? (
+                  <span
+                    className="absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-review shadow"
+                    style={{ left: `${selectedPoint.x * 100}%`, top: `${selectedPoint.y * 100}%` }}
+                  />
+                ) : null}
+              </button>
+              <div className="grid max-h-[420px] grid-cols-2 gap-2 overflow-y-auto pr-1">
+                {frames.map((frame) => (
+                  <button
+                    className={`relative aspect-video overflow-hidden rounded-md border bg-slate-100 text-left ${
+                      selectedFrame?.id === frame.id ? "border-review ring-2 ring-blue-100" : "border-line hover:border-review"
+                    }`}
+                    key={frame.id}
+                    onClick={(event) => selectFramePoint(frame, event)}
+                    type="button"
+                  >
+                    {frame.frame_url ? <img alt="" className="h-full w-full object-cover" src={mediaUrl(frame.frame_url)} /> : null}
+                    <span className="absolute bottom-1 left-1 rounded bg-white/90 px-1.5 py-0.5 text-[10px] font-semibold text-ink">
+                      {formatTime(frame.timestamp_seconds)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <EmptyState label={selectedVideoId ? "No frames extracted" : "No film selected"} />
+          )}
+
+          <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="grid gap-2 text-sm text-slate-700 sm:grid-cols-2 md:min-w-[420px]">
+              <Metric
+                label="Point"
+                value={selectedPoint ? `${Math.round(selectedPoint.x * 100)}%, ${Math.round(selectedPoint.y * 100)}%` : "None"}
               />
-              <TextInput
-                label="Frame End"
-                onChange={(value) => setTrackForm((item) => ({ ...item, frame_end: value }))}
-                value={trackForm.frame_end}
-              />
+              <Metric label="Track Status" value={activeTrackStatus ? String(activeTrackStatus) : "Not created"} />
             </div>
             <button
-              className="inline-flex h-10 w-fit items-center gap-2 rounded-md bg-field px-4 text-sm font-semibold text-white disabled:bg-slate-300"
-              disabled={!selectedVideoId}
-              type="submit"
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-review px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:bg-slate-300"
+              disabled={!selectedVideoId || !selectedFrame || !selectedPoint || isCreatingTrack}
+              onClick={createTrackSeed}
+              type="button"
             >
-              <Save size={16} />
-              Save Track
+              <Save aria-hidden="true" size={16} />
+              {isCreatingTrack ? "Creating" : "Create Player Track"}
             </button>
-          </form>
+          </div>
         </section>
+
         <section className="rounded-md border border-line bg-white p-4 shadow-panel">
-          <h2 className="mb-3 flex items-center gap-2 text-base font-semibold">
-            <Activity aria-hidden="true" size={18} />
-            Stored Tracks
-          </h2>
-          <div className="space-y-2">
-            {tracks.length ? (
-              tracks.map((track) => (
-                <div className="rounded-md border border-line p-3 text-sm" key={track.id}>
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="font-semibold">{track.track_label || "Manual track"}</div>
-                    <span className="rounded bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700">{track.status}</span>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 className="flex items-center gap-2 text-base font-semibold">
+              <Activity aria-hidden="true" size={18} />
+              Athlete Timeline
+            </h2>
+            <span className="rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
+              {trackTimeline ? `${trackTimeline.moments.length} moments` : "No timeline"}
+            </span>
+          </div>
+
+          {trackTimeline ? (
+            <div className="space-y-3">
+              <div className="rounded-md border border-line bg-slate-50 p-3 text-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="font-semibold">{trackTimeline.track.track_label || "Coach-selected player"}</div>
+                    <div className="mt-1 text-xs text-slate-600">
+                      {trackTimeline.athlete ? athleteLabel(trackTimeline.athlete) : "Unassigned"} - {trackTimeline.track.source}
+                    </div>
                   </div>
-                  <div className="mt-2 grid gap-2 text-slate-700 sm:grid-cols-3">
-                    <Metric label="Source" value={track.source} />
-                    <Metric label="Start" value={String(track.frame_start)} />
-                    <Metric label="End" value={String(track.frame_end)} />
-                  </div>
+                  <span className="rounded bg-white px-2 py-1 text-xs font-medium text-slate-700">{trackTimeline.track.status}</span>
                 </div>
+              </div>
+
+              <div className="max-h-[520px] space-y-2 overflow-y-auto pr-1">
+                {trackTimeline.moments.map((moment) => (
+                  <div className="rounded-md border border-line p-2 text-sm" key={moment.frame_id}>
+                    <div className="grid gap-2 sm:grid-cols-[120px_1fr]">
+                      <div className="relative aspect-video overflow-hidden rounded bg-slate-100">
+                        {moment.frame_url ? <img alt="" className="h-full w-full object-cover" src={mediaUrl(moment.frame_url)} /> : null}
+                        <span
+                          className="absolute border-2 border-review"
+                          style={{
+                            left: `${moment.box.x * 100}%`,
+                            top: `${moment.box.y * 100}%`,
+                            width: `${moment.box.width * 100}%`,
+                            height: `${moment.box.height * 100}%`
+                          }}
+                        />
+                      </div>
+                      <div className="flex min-w-0 items-center justify-between gap-2">
+                        <div>
+                          <div className="font-semibold">{formatTime(moment.timestamp_seconds)}</div>
+                          <div className="text-xs text-slate-600">Frame {moment.frame_number}</div>
+                        </div>
+                        <button
+                          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-line px-2.5 text-xs font-semibold hover:border-review"
+                          onClick={() => useTimelineMomentForTag(moment)}
+                          type="button"
+                        >
+                          <Tags aria-hidden="true" size={13} />
+                          Tag
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <EmptyState label="No athlete timeline" />
+          )}
+
+          <div className="mt-4 space-y-2">
+            <div className="text-xs font-semibold uppercase text-slate-500">Stored Tracks</div>
+            {tracks.length ? (
+              tracks.slice(0, 6).map((track) => (
+                <button
+                  className={`w-full rounded-md border px-3 py-2 text-left text-sm ${
+                    trackTimeline?.track.id === track.id ? "border-review bg-blue-50" : "border-line hover:border-review"
+                  }`}
+                  key={track.id}
+                  onClick={() => loadTrackTimeline(track.id)}
+                  type="button"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold">{track.track_label || "Coach-selected player"}</span>
+                    <span className="rounded bg-white px-2 py-1 text-xs font-medium text-slate-700">{track.status}</span>
+                  </div>
+                </button>
               ))
             ) : (
               <EmptyState label="No tracks stored" />
@@ -1039,13 +1351,34 @@ export function ScoutDashApp() {
   }
 }
 
-function ProfilePanel({ profile, selectedAthlete }: { profile: AthleteProfile | null; selectedAthlete: Athlete | null }) {
+function ProfilePanel({
+  isGeneratingReport,
+  onGenerateReport,
+  profile,
+  selectedAthlete
+}: {
+  isGeneratingReport: boolean;
+  onGenerateReport: () => void;
+  profile: AthleteProfile | null;
+  selectedAthlete: Athlete | null;
+}) {
   return (
     <section className="rounded-md border border-line bg-white p-4 shadow-panel">
-      <h2 className="mb-3 flex items-center gap-2 text-base font-semibold">
-        <UserRound aria-hidden="true" size={18} />
-        Athlete Profile
-      </h2>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="flex items-center gap-2 text-base font-semibold">
+          <UserRound aria-hidden="true" size={18} />
+          Athlete Profile
+        </h2>
+        <button
+          className="inline-flex h-9 items-center gap-2 rounded-md bg-ink px-3 text-sm font-semibold text-white hover:bg-slate-700 disabled:bg-slate-300"
+          disabled={!profile || isGeneratingReport}
+          onClick={onGenerateReport}
+          type="button"
+        >
+          <FileText aria-hidden="true" size={15} />
+          {isGeneratingReport ? "Generating" : "Generate Report"}
+        </button>
+      </div>
       {profile ? (
         <div className="space-y-4">
           <div>
@@ -1065,6 +1398,123 @@ function ProfilePanel({ profile, selectedAthlete }: { profile: AthleteProfile | 
         <EmptyState label={selectedAthlete ? "Profile loading" : "No athlete selected"} />
       )}
     </section>
+  );
+}
+
+function ReportPanel({
+  activeReport,
+  onDownloadReport,
+  onSelectReport,
+  reports
+}: {
+  activeReport: AthleteReport | null;
+  onDownloadReport: (reportId: string) => void;
+  onSelectReport: (report: AthleteReport) => void;
+  reports: AthleteReport[];
+}) {
+  return (
+    <section className="rounded-md border border-line bg-white p-4 shadow-panel">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="flex items-center gap-2 text-base font-semibold">
+          <FileText aria-hidden="true" size={18} />
+          Development Report
+        </h2>
+        <button
+          className="inline-flex h-9 items-center gap-2 rounded-md border border-line px-3 text-sm font-medium hover:border-review disabled:text-slate-400"
+          disabled={!activeReport}
+          onClick={() => activeReport && onDownloadReport(activeReport.id)}
+          type="button"
+        >
+          <Download aria-hidden="true" size={15} />
+          PDF
+        </button>
+      </div>
+      {reports.length > 1 ? (
+        <div className="mb-3 flex flex-wrap gap-2">
+          {reports.slice(0, 4).map((report) => (
+            <button
+              className={`rounded-md border px-2.5 py-1.5 text-xs font-medium ${
+                activeReport?.id === report.id
+                  ? "border-review bg-blue-50 text-review"
+                  : "border-line text-slate-600 hover:border-review"
+              }`}
+              key={report.id}
+              onClick={() => onSelectReport(report)}
+              type="button"
+            >
+              {new Date(report.created_at).toLocaleDateString()}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {activeReport ? (
+        <div className="space-y-4">
+          <div className="rounded-md border border-line bg-slate-50 p-3 text-sm">
+            <div className="font-semibold">{activeReport.title}</div>
+            <div className="mt-1 text-xs text-slate-600">
+              {activeReport.report_data.evidence_count} evidence tags - {activeReport.report_data.note_count} coach notes
+            </div>
+            <p className="mt-2 text-xs text-slate-600">{activeReport.report_data.traceability_statement}</p>
+          </div>
+          {activeReport.report_data.sections.map((section) => (
+            <div className="rounded-md border border-line p-3" key={section.key}>
+              <div className="text-sm font-semibold">{section.title}</div>
+              <p className="mt-1 text-sm text-slate-700">{section.summary}</p>
+              {section.observations.length ? (
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700">
+                  {section.observations.slice(0, 4).map((observation) => (
+                    <li key={observation}>{observation}</li>
+                  ))}
+                </ul>
+              ) : null}
+              {section.supporting_notes.length ? (
+                <div className="mt-3 space-y-2">
+                  <div className="text-xs font-semibold uppercase text-slate-500">Coach Notes</div>
+                  {section.supporting_notes.slice(0, 3).map((note) => (
+                    <div className="rounded border border-line bg-slate-50 px-2 py-1.5 text-xs text-slate-700" key={note.note_id}>
+                      {note.author_name || "Coach"}: {note.body}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {section.supporting_evidence.length ? (
+                <div className="mt-3">
+                  <div className="mb-2 text-xs font-semibold uppercase text-slate-500">Supporting Clips</div>
+                  <div className="space-y-1.5">
+                    {section.supporting_evidence.slice(0, 5).map((item) => (
+                      <ReportEvidenceChip evidence={item} key={`${section.key}-${item.evidence_tag_id}`} />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <EmptyState label="Generate a report from the athlete profile" />
+      )}
+    </section>
+  );
+}
+
+function ReportEvidenceChip({ evidence }: { evidence: ReportEvidenceReference }) {
+  const clipWindow =
+    evidence.clip_start_seconds !== null && evidence.clip_end_seconds !== null
+      ? `${formatTime(evidence.clip_start_seconds)}-${formatTime(evidence.clip_end_seconds)}`
+      : formatTime(evidence.timestamp_seconds);
+  return (
+    <div className="rounded-md border border-line bg-slate-50 px-2 py-2 text-xs">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="font-semibold text-ink">{evidence.tag_name}</div>
+          <div className="text-slate-600">{evidence.category_name}</div>
+        </div>
+        <span className="rounded bg-white px-2 py-1 font-medium text-slate-700">{clipWindow}</span>
+      </div>
+      <div className="mt-1 text-slate-600">{evidence.video_title}</div>
+      {evidence.notes ? <div className="mt-1 text-slate-700">{evidence.notes}</div> : null}
+      <div className="mt-1 font-mono text-[10px] text-slate-400">tag {evidence.evidence_tag_id}</div>
+    </div>
   );
 }
 

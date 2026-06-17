@@ -66,6 +66,25 @@ export interface VideoAsset {
   updated_at: string;
 }
 
+export interface VideoFrame {
+  id: string;
+  video_id: string;
+  frame_number: number;
+  timestamp_seconds: number;
+  storage_key: string;
+  frame_url: string | null;
+  width: number | null;
+  height: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VideoProcessRead {
+  video: VideoAsset;
+  frames: VideoFrame[];
+  frame_count_extracted: number;
+}
+
 export interface Category {
   id: string;
   organization_id: string;
@@ -157,6 +176,62 @@ export interface AthleteProfile {
   coach_notes: Note[];
 }
 
+export interface ReportEvidenceReference {
+  evidence_tag_id: string;
+  clip_id: string | null;
+  video_id: string;
+  video_title: string;
+  category_name: string;
+  tag_name: string;
+  timestamp_seconds: number;
+  clip_start_seconds: number | null;
+  clip_end_seconds: number | null;
+  notes: string | null;
+}
+
+export interface ReportNoteReference {
+  note_id: string;
+  author_name: string | null;
+  body: string;
+  created_at: string;
+}
+
+export interface ReportSection {
+  key: string;
+  title: string;
+  summary: string;
+  observations: string[];
+  supporting_evidence: ReportEvidenceReference[];
+  supporting_notes: ReportNoteReference[];
+}
+
+export interface AthleteDevelopmentReportData {
+  athlete: Athlete;
+  team: Team;
+  generated_at: string;
+  report_title: string;
+  evidence_count: number;
+  note_count: number;
+  sections: ReportSection[];
+  traceability_statement: string;
+}
+
+export interface AthleteReport {
+  id: string;
+  organization_id: string;
+  team_id: string;
+  athlete_id: string;
+  title: string;
+  report_type: string;
+  status: string;
+  generated_by: string | null;
+  report_data: AthleteDevelopmentReportData;
+  evidence_tag_ids: string[];
+  note_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
+
 export interface VisionTrack {
   id: string;
   organization_id: string;
@@ -173,3 +248,22 @@ export interface VisionTrack {
   updated_at: string;
 }
 
+export interface TrackTimelineMoment {
+  frame_id: string;
+  frame_number: number;
+  timestamp_seconds: number;
+  frame_url: string | null;
+  box: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+}
+
+export interface VisionTrackTimeline {
+  track: VisionTrack;
+  athlete: Athlete | null;
+  video: VideoAsset;
+  moments: TrackTimelineMoment[];
+}

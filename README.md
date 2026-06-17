@@ -1,8 +1,8 @@
 # ScoutDash
 
-ScoutDash is a sports development intelligence platform for organizing game film around athlete behaviors, habits, decisions, and coach-reviewed evidence.
+ScoutDash is a sports development intelligence platform for organizing game film around athlete identification, athlete timelines, and coach-reviewed evidence.
 
-Phase 1 is intentionally manual. Coaches upload film, pause video, tag athlete behavior at timestamps, and build athlete profiles from supporting clips and notes. SAM3 is present as future infrastructure only.
+The current product foundation is the Video Intelligence Engine: upload or import film, extract frames, select the athlete, create a SAM3-ready player track, review that athlete's timeline, and turn moments into evidence tags. SAM3 is the identification layer only. Coaches validate, and ScoutDash stores evidence.
 
 ## Stack
 
@@ -36,14 +36,17 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-## Phase 1 Scope
+## Current Scope
 
 - organizations, teams, athletes, events
-- film uploads and video review
+- film uploads, direct URL imports, and video review
+- FFmpeg frame extraction
+- coach-click player track seeds for future SAM3 segmentation and tracking
+- athlete timeline review from stored track metadata
 - universal categories and tags
 - timestamped behavior evidence
 - athlete profiles with strengths, development areas, frequency, consistency, clips, and coach notes
-- vision track storage for manual SAM3-assisted segmentation
+- athlete development reports generated from traceable evidence and notes
 
-No automatic behavior detection is included in this phase.
+No automatic behavior detection, player ratings, or coaching recommendations are included.
 

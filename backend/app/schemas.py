@@ -130,6 +130,38 @@ class VideoRead(ApiModel):
     updated_at: datetime
 
 
+class VideoUrlImport(BaseModel):
+    organization_id: str
+    team_id: str
+    event_id: str | None = None
+    title: str = Field(min_length=1, max_length=220)
+    source_url: str = Field(min_length=1, max_length=1000)
+
+
+class VideoFrameRead(ApiModel):
+    id: str
+    video_id: str
+    frame_number: int
+    timestamp_seconds: float
+    storage_key: str
+    frame_url: str | None = None
+    width: int | None
+    height: int | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class VideoProcessRequest(BaseModel):
+    sample_fps: float = Field(default=1.0, gt=0, le=10)
+    max_frames: int = Field(default=240, ge=1, le=2000)
+
+
+class VideoProcessRead(BaseModel):
+    video: VideoRead
+    frames: list[VideoFrameRead]
+    frame_count_extracted: int
+
+
 class ClipCreate(BaseModel):
     organization_id: str
     team_id: str
@@ -291,6 +323,66 @@ class AthleteProfile(ApiModel):
     coach_notes: list[NoteRead]
 
 
+class ReportGenerateRequest(BaseModel):
+    generated_by: str | None = Field(default=None, max_length=120)
+
+
+class ReportEvidenceReference(BaseModel):
+    evidence_tag_id: str
+    clip_id: str | None
+    video_id: str
+    video_title: str
+    category_name: str
+    tag_name: str
+    timestamp_seconds: float
+    clip_start_seconds: float | None = None
+    clip_end_seconds: float | None = None
+    notes: str | None = None
+
+
+class ReportNoteReference(BaseModel):
+    note_id: str
+    author_name: str | None
+    body: str
+    created_at: datetime
+
+
+class ReportSection(BaseModel):
+    key: str
+    title: str
+    summary: str
+    observations: list[str] = Field(default_factory=list)
+    supporting_evidence: list[ReportEvidenceReference] = Field(default_factory=list)
+    supporting_notes: list[ReportNoteReference] = Field(default_factory=list)
+
+
+class AthleteDevelopmentReportData(BaseModel):
+    athlete: AthleteRead
+    team: TeamRead
+    generated_at: datetime
+    report_title: str
+    evidence_count: int
+    note_count: int
+    sections: list[ReportSection]
+    traceability_statement: str
+
+
+class AthleteReportRead(ApiModel):
+    id: str
+    organization_id: str
+    team_id: str
+    athlete_id: str
+    title: str
+    report_type: str
+    status: str
+    generated_by: str | None
+    report_data: AthleteDevelopmentReportData
+    evidence_tag_ids: list[str]
+    note_ids: list[str]
+    created_at: datetime
+    updated_at: datetime
+
+
 class VisionTrackCreate(BaseModel):
     organization_id: str
     video_id: str
@@ -343,3 +435,28 @@ class VisionManualSelectionRead(BaseModel):
     frame_number: int
     prompt: dict[str, Any]
 
+
+class PlayerTrackSeedCreate(BaseModel):
+    video_id: str
+    athlete_id: str | None = None
+    frame_id: str
+    x_ratio: float = Field(ge=0, le=1)
+    y_ratio: float = Field(ge=0, le=1)
+    box_width_ratio: float = Field(default=0.12, gt=0, le=1)
+    box_height_ratio: float = Field(default=0.22, gt=0, le=1)
+    track_label: str | None = Field(default=None, max_length=160)
+
+
+class TrackTimelineMoment(BaseModel):
+    frame_id: str
+    frame_number: int
+    timestamp_seconds: float
+    frame_url: str | None
+    box: dict[str, float]
+
+
+class VisionTrackTimeline(BaseModel):
+    track: VisionTrackRead
+    athlete: AthleteRead | None = None
+    video: VideoRead
+    moments: list[TrackTimelineMoment]

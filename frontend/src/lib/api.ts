@@ -29,6 +29,10 @@ export function mediaUrl(path: string | null): string {
   return `${API_ROOT}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+export function apiUrl(path: string): string {
+  return `${API_BASE}${path}`;
+}
+
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let message = `Request failed with ${response.status}`;
@@ -42,4 +46,3 @@ async function parseResponse<T>(response: Response): Promise<T> {
   }
   return (await response.json()) as T;
 }
-

@@ -6,12 +6,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import OperationalError
 
-from app.api.routes import athletes, clips, evidence, events, notes, organizations, taxonomy, teams, videos, vision
+from app.api.routes import athletes, clips, evidence, events, notes, organizations, reports, taxonomy, teams, videos, vision
 from app.core.config import get_settings
 from app.db.base import Base
 from app.db.session import engine
 from app.models import (  # noqa: F401
     AthleteModel,
+    AthleteReportModel,
     CategoryModel,
     ClipModel,
     EventModel,
@@ -20,6 +21,7 @@ from app.models import (  # noqa: F401
     OrganizationModel,
     TagModel,
     TeamModel,
+    VideoFrameModel,
     VideoModel,
     VisionTrackModel,
 )
@@ -77,3 +79,4 @@ app.include_router(taxonomy.router, prefix=settings.api_prefix)
 app.include_router(evidence.router, prefix=settings.api_prefix)
 app.include_router(notes.router, prefix=settings.api_prefix)
 app.include_router(vision.router, prefix=settings.api_prefix)
+app.include_router(reports.router, prefix=settings.api_prefix)
