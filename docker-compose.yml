@@ -1,0 +1,68 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: scoutdash
+      POSTGRES_PASSWORD: scoutdash
+      POSTGRES_DB: scoutdash
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: scoutdash
+      MINIO_ROOT_PASSWORD: scoutdash-secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      APP_NAME: ScoutDash
+      API_PREFIX: /api
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      DATABASE_URL: postgresql+psycopg://scoutdash:scoutdash@postgres:5432/scoutdash
+      STORAGE_BACKEND: local
+      LOCAL_UPLOAD_DIR: /app/backend/data/uploads
+      PUBLIC_MEDIA_BASE_URL: http://localhost:8000/media
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_BUCKET: scoutdash-film
+      S3_ACCESS_KEY_ID: scoutdash
+      S3_SECRET_ACCESS_KEY: scoutdash-secret
+    depends_on:
+      - postgres
+      - minio
+    ports:
+      - "8000:8000"
+    volumes:
+      - uploads:/app/backend/data/uploads
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app/frontend
+      - /app/frontend/node_modules
+      - /app/frontend/.next
+
+volumes:
+  postgres-data:
+  minio-data:
+  uploads:
+

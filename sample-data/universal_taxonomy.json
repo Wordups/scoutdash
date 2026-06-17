@@ -1,0 +1,25 @@
+{
+  "basketball": [
+    {
+      "category": "Defense",
+      "tags": ["Help Rotation", "Closeout", "Box Out"]
+    },
+    {
+      "category": "Off Ball",
+      "tags": ["Relocation", "Screen Navigation", "Spacing"]
+    }
+  ],
+  "soccer": [
+    {
+      "category": "Transition",
+      "tags": ["Recovery Run", "Counter Press", "Wide Support"]
+    }
+  ],
+  "football": [
+    {
+      "category": "Assignment",
+      "tags": ["Gap Integrity", "Pursuit Angle", "Leverage"]
+    }
+  ]
+}
+

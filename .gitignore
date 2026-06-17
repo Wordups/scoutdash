@@ -1,0 +1,12 @@
+backend/.venv/
+backend/data/uploads/*
+backend/tests/.tmp/
+backend/scoutdash.db
+frontend/.next/
+frontend/node_modules/
+frontend/out/
+.env
+*.pyc
+*.log
+*.tsbuildinfo
+__pycache__/

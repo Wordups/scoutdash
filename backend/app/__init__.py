@@ -1,0 +1,2 @@
+"""ScoutDash backend package."""
+
