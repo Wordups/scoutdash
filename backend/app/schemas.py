@@ -487,3 +487,21 @@ class VisionTrackTimeline(BaseModel):
     athlete: AthleteRead | None = None
     video: VideoRead
     moments: list[TrackTimelineMoment]
+
+
+class SegmentationFrameBox(BaseModel):
+    """One propagated frame from the SAM3 worker. Box is {x, y, width, height}
+    as ratios in [0, 1] — same shape as the seed boxes the timeline returns."""
+
+    frame_number: int
+    box: dict[str, float]
+
+
+class TrackSegmentationWriteback(BaseModel):
+    """Payload the SAM3 GPU worker POSTs back with per-frame propagated boxes."""
+
+    status: str = "sam3_tracked"
+    model: str | None = "sam3.1"
+    version: str | None = None
+    coach_validation: str = "required"
+    frames: list[SegmentationFrameBox] = Field(default_factory=list)
