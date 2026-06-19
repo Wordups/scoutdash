@@ -110,6 +110,11 @@ class VideoCreate(BaseModel):
     duration_seconds: float | None = Field(default=None, ge=0)
     fps: float | None = Field(default=None, ge=0)
     frame_count: int | None = Field(default=None, ge=0)
+    width: int | None = Field(default=None, ge=0)
+    height: int | None = Field(default=None, ge=0)
+    codec: str | None = Field(default=None, max_length=80)
+    container_format: str | None = Field(default=None, max_length=120)
+    creation_time: str | None = Field(default=None, max_length=80)
 
 
 class VideoRead(ApiModel):
@@ -126,6 +131,11 @@ class VideoRead(ApiModel):
     duration_seconds: float | None
     fps: float | None
     frame_count: int | None
+    width: int | None
+    height: int | None
+    codec: str | None
+    container_format: str | None
+    creation_time: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -156,10 +166,18 @@ class VideoProcessRequest(BaseModel):
     max_frames: int = Field(default=240, ge=1, le=2000)
 
 
-class VideoProcessRead(BaseModel):
-    video: VideoRead
-    frames: list[VideoFrameRead]
+class VideoProcessingJobRead(ApiModel):
+    id: str
+    video_id: str
+    status: Literal["queued", "processing", "completed", "failed"]
+    sample_fps: float
+    max_frames: int
     frame_count_extracted: int
+    error_message: str | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
 
 
 class VideoReadinessRead(BaseModel):

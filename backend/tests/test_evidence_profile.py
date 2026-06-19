@@ -215,7 +215,9 @@ def test_video_processing_and_player_track_seed_workflow(client, tmp_path):
 
     capability_response = client.get("/health/capabilities")
     assert capability_response.status_code == 200
-    assert capability_response.json()["video_processing"]["ready"] is True
+    processing_capabilities = capability_response.json()["video_processing"]
+    assert processing_capabilities["ready"] is True
+    assert processing_capabilities["ffprobe"]
 
     source_video = tmp_path / "game-film.mp4"
     subprocess.run(
@@ -226,6 +228,8 @@ def test_video_processing_and_player_track_seed_workflow(client, tmp_path):
             "lavfi",
             "-i",
             "testsrc=size=320x240:rate=10:duration=2",
+            "-metadata",
+            "creation_time=2026-06-19T01:02:03Z",
             "-pix_fmt",
             "yuv420p",
             str(source_video),
@@ -261,21 +265,39 @@ def test_video_processing_and_player_track_seed_workflow(client, tmp_path):
         )
     assert upload_response.status_code == 201, upload_response.text
     video = upload_response.json()
+    assert video["duration_seconds"] == 2.0
+    assert video["fps"] == 10.0
+    assert video["frame_count"] == 20
+    assert video["width"] == 320
+    assert video["height"] == 240
+    assert video["codec"]
+    assert video["creation_time"].startswith("2026-06-19T01:02:03")
 
     readiness_response = client.get(f"/api/videos/{video['id']}/readiness")
     assert readiness_response.status_code == 200, readiness_response.text
     assert readiness_response.json()["file_available"] is True
     assert readiness_response.json()["processing_ready"] is True
 
-    process_response = client.post(f"/api/videos/{video['id']}/process", json={"sample_fps": 1, "max_frames": 4})
-    assert process_response.status_code == 200, process_response.text
-    processed = process_response.json()
-    assert processed["frame_count_extracted"] >= 2
-    first_frame = processed["frames"][0]
+    process_response = client.post(
+        f"/api/videos/{video['id']}/process",
+        json={"sample_fps": 1, "max_frames": 4},
+    )
+    assert process_response.status_code == 202, process_response.text
+    queued_job = process_response.json()
+    assert queued_job["video_id"] == video["id"]
+
+    status_response = client.get(f"/api/videos/{video['id']}/process-status")
+    assert status_response.status_code == 200, status_response.text
+    completed_job = status_response.json()
+    assert completed_job["status"] == "completed", completed_job
+    assert completed_job["frame_count_extracted"] >= 2
+
+    processed_frames = client.get(f"/api/videos/{video['id']}/frames").json()
+    first_frame = processed_frames[0]
     assert first_frame["storage_key"].startswith(f"frames/{video['id']}/")
 
     processed_readiness = client.get(f"/api/videos/{video['id']}/readiness").json()
-    assert processed_readiness["extracted_frame_count"] == processed["frame_count_extracted"]
+    assert processed_readiness["extracted_frame_count"] == completed_job["frame_count_extracted"]
     assert "review moments" in processed_readiness["message"]
     assert first_frame["frame_url"].endswith(".jpg")
 
@@ -296,7 +318,7 @@ def test_video_processing_and_player_track_seed_workflow(client, tmp_path):
     assert timeline["track"]["source"] == "coach_click_sam3_seed"
     assert timeline["track"]["segmentation_metadata"]["status"] == "sam3_adapter_not_configured"
     assert timeline["athlete"]["display_name"] == "Player #3"
-    assert len(timeline["moments"]) == processed["frame_count_extracted"]
+    assert len(timeline["moments"]) == completed_job["frame_count_extracted"]
 
     timeline_response = client.get(f"/api/vision/tracks/{timeline['track']['id']}/timeline")
     assert timeline_response.status_code == 200
@@ -304,9 +326,12 @@ def test_video_processing_and_player_track_seed_workflow(client, tmp_path):
 
     stored_video_path = get_settings().local_upload_dir / video["storage_key"]
     stored_video_path.unlink()
-    missing_response = client.post(f"/api/videos/{video['id']}/process", json={"sample_fps": 1, "max_frames": 4})
+    missing_response = client.post(
+        f"/api/videos/{video['id']}/process",
+        json={"sample_fps": 1, "max_frames": 4},
+    )
     assert missing_response.status_code == 404
     assert "Upload the film again" in missing_response.json()["detail"]
 
     preserved_frames = client.get(f"/api/videos/{video['id']}/frames").json()
-    assert [frame["id"] for frame in preserved_frames] == [frame["id"] for frame in processed["frames"]]
+    assert [frame["id"] for frame in preserved_frames] == [frame["id"] for frame in processed_frames]

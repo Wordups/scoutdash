@@ -123,6 +123,11 @@ class VideoModel(TimestampMixin, Base):
     duration_seconds: Mapped[float | None] = mapped_column(Float)
     fps: Mapped[float | None] = mapped_column(Float)
     frame_count: Mapped[int | None] = mapped_column(Integer)
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
+    codec: Mapped[str | None] = mapped_column(String(80))
+    container_format: Mapped[str | None] = mapped_column(String(120))
+    creation_time: Mapped[str | None] = mapped_column(String(80))
 
     organization: Mapped[OrganizationModel] = relationship(back_populates="videos")
     team: Mapped[TeamModel] = relationship(back_populates="videos")
@@ -130,6 +135,9 @@ class VideoModel(TimestampMixin, Base):
     clips: Mapped[list[ClipModel]] = relationship(back_populates="video", cascade="all, delete-orphan")
     evidence_tags: Mapped[list[EvidenceTagModel]] = relationship(back_populates="video")
     frames: Mapped[list[VideoFrameModel]] = relationship(back_populates="video", cascade="all, delete-orphan")
+    processing_jobs: Mapped[list[VideoProcessingJobModel]] = relationship(
+        back_populates="video", cascade="all, delete-orphan"
+    )
     vision_tracks: Mapped[list[VisionTrackModel]] = relationship(back_populates="video")
 
 
@@ -269,6 +277,24 @@ class VideoFrameModel(TimestampMixin, Base):
     height: Mapped[int | None] = mapped_column(Integer)
 
     video: Mapped[VideoModel] = relationship(back_populates="frames")
+
+
+class VideoProcessingJobModel(TimestampMixin, Base):
+    __tablename__ = "video_processing_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    video_id: Mapped[str] = mapped_column(
+        ForeignKey("videos.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(40), default="queued", nullable=False, index=True)
+    sample_fps: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    max_frames: Mapped[int] = mapped_column(Integer, default=240, nullable=False)
+    frame_count_extracted: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    video: Mapped[VideoModel] = relationship(back_populates="processing_jobs")
 
 
 class AthleteReportModel(TimestampMixin, Base):

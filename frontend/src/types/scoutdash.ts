@@ -62,6 +62,11 @@ export interface VideoAsset {
   duration_seconds: number | null;
   fps: number | null;
   frame_count: number | null;
+  width: number | null;
+  height: number | null;
+  codec: string | null;
+  container_format: string | null;
+  creation_time: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -79,10 +84,18 @@ export interface VideoFrame {
   updated_at: string;
 }
 
-export interface VideoProcessRead {
-  video: VideoAsset;
-  frames: VideoFrame[];
+export interface VideoProcessingJob {
+  id: string;
+  video_id: string;
+  status: "queued" | "processing" | "completed" | "failed";
+  sample_fps: number;
+  max_frames: number;
   frame_count_extracted: number;
+  error_message: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface VideoReadiness {

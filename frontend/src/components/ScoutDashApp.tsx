@@ -43,7 +43,7 @@ import type {
   TrackTimelineMoment,
   VideoAsset,
   VideoFrame,
-  VideoProcessRead,
+  VideoProcessingJob,
   VideoReadiness,
   VisionTrack,
   ReportEvidenceReference,
@@ -506,19 +506,37 @@ export function ScoutDashApp() {
 
   async function processSelectedVideo() {
     if (!selectedVideoId) return;
+    const videoId = selectedVideoId;
     try {
       setIsProcessingVideo(true);
-      const processed = await apiPost<VideoProcessRead>(`/videos/${selectedVideoId}/process`, {
+      setNotice({ kind: "loading", message: "Breaking down film. You can keep working." });
+      let job = await apiPost<VideoProcessingJob>(`/videos/${videoId}/process`, {
         sample_fps: 1,
         max_frames: 240
       });
-      setVideos((items) => items.map((item) => (item.id === processed.video.id ? processed.video : item)));
-      setFrames(processed.frames);
-      setSelectedFrameId(processed.frames[0]?.id ?? "");
+      const deadline = Date.now() + 30 * 60 * 1000;
+      while (job.status === "queued" || job.status === "processing") {
+        if (Date.now() >= deadline) {
+          throw new Error("Film breakdown is still running. Select Break Down Film again to check its progress.");
+        }
+        await delay(1500);
+        job = await apiGet<VideoProcessingJob>(`/videos/${videoId}/process-status`);
+      }
+      if (job.status === "failed") {
+        throw new Error(job.error_message || "Could not break down film.");
+      }
+
+      const [processedVideo, processedFrames] = await Promise.all([
+        apiGet<VideoAsset>(`/videos/${videoId}`),
+        apiGet<VideoFrame[]>(`/videos/${videoId}/frames`)
+      ]);
+      setVideos((items) => items.map((item) => (item.id === processedVideo.id ? processedVideo : item)));
+      setFrames(processedFrames);
+      setSelectedFrameId(processedFrames[0]?.id ?? "");
       setSelectedPoint(null);
       setTrackTimeline(null);
-      await loadVideoReadiness(processed.video.id);
-      showSuccess(`${processed.frame_count_extracted} review moments ready`);
+      await loadVideoReadiness(videoId);
+      showSuccess(`${job.frame_count_extracted} review moments ready`);
     } catch (error) {
       showError(error);
     } finally {
@@ -925,10 +943,13 @@ export function ScoutDashApp() {
               <h2 className="mb-2 text-sm font-semibold">Film Details</h2>
               <div className="grid grid-cols-2 gap-2 text-sm text-slate-700 sm:grid-cols-3">
                 <Metric label="File" value={selectedVideo?.original_filename || "No film selected"} />
-                <Metric label="Format" value={formatContentType(selectedVideo?.content_type)} />
+                <Metric label="Format" value={selectedVideo?.container_format?.toUpperCase() || formatContentType(selectedVideo?.content_type)} />
+                <Metric label="Codec" value={selectedVideo?.codec?.toUpperCase() || "Pending"} />
                 <Metric label="Duration" value={selectedVideo?.duration_seconds != null ? formatTime(selectedVideo.duration_seconds) : "Pending"} />
                 <Metric label="Frame Rate" value={selectedVideo?.fps != null ? `${selectedVideo.fps.toFixed(2)} fps` : "Pending"} />
+                <Metric label="Resolution" value={selectedVideo?.width && selectedVideo.height ? `${selectedVideo.width} x ${selectedVideo.height}` : "Pending"} />
                 <Metric label="Source Frames" value={selectedVideo?.frame_count != null ? selectedVideo.frame_count.toLocaleString() : "Pending"} />
+                <Metric label="Recorded" value={formatFilmDate(selectedVideo?.creation_time)} />
                 <Metric label="Review Moments" value={(videoReadiness?.extracted_frame_count ?? frames.length).toLocaleString()} />
               </div>
             </div>
@@ -2017,6 +2038,16 @@ function formatContentType(value: string | null | undefined): string {
   if (!value) return "Pending";
   const subtype = value.split("/", 2)[1] || value;
   return subtype.replace("x-", "").toUpperCase();
+}
+
+function formatFilmDate(value: string | null | undefined): string {
+  if (!value) return "Not provided";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
 function numeric(value: string, fallback: number): number {
