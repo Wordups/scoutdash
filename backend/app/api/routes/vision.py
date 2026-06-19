@@ -1,12 +1,19 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
+from app.core.config import Settings, get_settings
 from app.models import AthleteModel, OrganizationModel, VideoFrameModel, VideoModel, VisionTrackModel
 from app.schemas import (
     AthleteRead,
     PlayerTrackSeedCreate,
+    TrackSegmentationWriteback,
     TrackTimelineMoment,
     VideoRead,
     VisionManualSelection,
@@ -16,6 +23,8 @@ from app.schemas import (
     VisionTrackTimeline,
 )
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/vision", tags=["vision"])
 
@@ -73,7 +82,12 @@ def create_manual_selection(payload: VisionManualSelection, db: Session = Depend
 
 
 @router.post("/track-seeds", response_model=VisionTrackTimeline, status_code=201)
-def create_player_track_seed(payload: PlayerTrackSeedCreate, db: Session = Depends(get_db)) -> VisionTrackTimeline:
+def create_player_track_seed(
+    payload: PlayerTrackSeedCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> VisionTrackTimeline:
     video = db.get(VideoModel, payload.video_id)
     if video is None:
         raise HTTPException(status_code=404, detail="Video not found")
@@ -132,6 +146,86 @@ def create_player_track_seed(payload: PlayerTrackSeedCreate, db: Session = Depen
             "note": "Track seed created from coach click. Wire SAM3 adapter here for mask propagation.",
         },
     )
+    db.add(track)
+    db.commit()
+    db.refresh(track)
+
+    # Hand the seed off to the SAM3 GPU worker (separate service). The backend
+    # never imports sam3/torch — it just dispatches a job. If no worker is
+    # configured the seed stands on its own (status stays
+    # 'sam3_adapter_not_configured') so the coach still sees the click anchor.
+    if settings.sam3_worker_url:
+        job = _build_sam3_job(track, frames, selected_frame, video, payload)
+        track.segmentation_metadata = {
+            **(track.segmentation_metadata or {}),
+            "status": "sam3_processing",
+            "note": "Track seed created; SAM3 tracking dispatched to the GPU worker.",
+        }
+        db.add(track)
+        db.commit()
+        db.refresh(track)
+        background_tasks.add_task(
+            _dispatch_sam3_job,
+            settings.sam3_worker_url,
+            settings.internal_api_token,
+            job,
+        )
+
+    return _track_timeline(track, db)
+
+
+@router.post("/tracks/{track_id}/segmentation", response_model=VisionTrackTimeline)
+def write_track_segmentation(
+    track_id: str,
+    payload: TrackSegmentationWriteback,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    x_internal_token: str | None = Header(default=None, alias="X-Internal-Token"),
+) -> VisionTrackTimeline:
+    """Internal write-back endpoint the SAM3 GPU worker calls with propagated,
+    per-frame boxes. Guarded by a shared internal token when one is configured.
+
+    Replaces each seed frame's box with the propagated box (matched on
+    frame_number), drops frames where the object was not present, and flips the
+    segmentation status to 'sam3_tracked'. coach_validation stays 'required' —
+    this is an assistive tracking layer, not behavior detection, so no ratings
+    are invented here.
+    """
+    if settings.internal_api_token and x_internal_token != settings.internal_api_token:
+        raise HTTPException(status_code=401, detail="Invalid internal token")
+
+    track = db.get(VisionTrackModel, track_id)
+    if track is None:
+        raise HTTPException(status_code=404, detail="Track not found")
+
+    boxes_by_frame = {frame.frame_number: frame.box for frame in payload.frames if frame.box}
+
+    bounding = dict(track.bounding_data or {})
+    kept_frames = []
+    for item in bounding.get("frames", []):
+        box = boxes_by_frame.get(item.get("frame_number"))
+        if box is None:
+            # Object absent on this frame — drop it from the track.
+            continue
+        kept_frames.append({**item, "box": box})
+    bounding["frames"] = kept_frames
+    track.bounding_data = bounding
+
+    if kept_frames:
+        track.frame_start = kept_frames[0]["frame_number"]
+        track.frame_end = kept_frames[-1]["frame_number"]
+        track.status = "tracked"
+
+    track.segmentation_metadata = {
+        **(track.segmentation_metadata or {}),
+        "status": payload.status or "sam3_tracked",
+        "model": payload.model or (track.segmentation_metadata or {}).get("model", "sam3"),
+        "version": payload.version,
+        "coach_validation": "required",
+        "frames_tracked": len(kept_frames),
+        "tracked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
     db.add(track)
     db.commit()
     db.refresh(track)
@@ -198,3 +292,46 @@ def _storage_url(backend: str, storage_key: str) -> str | None:
 
     settings = get_settings()
     return storage_url(settings, backend, storage_key)
+
+
+def _build_sam3_job(
+    track: VisionTrackModel,
+    frames: list[VideoFrameModel],
+    selected_frame: VideoFrameModel,
+    video: VideoModel,
+    payload: PlayerTrackSeedCreate,
+) -> dict:
+    """Job payload the GPU worker consumes: ordered frame URLs + the coach click.
+
+    The worker downloads the frames as 0.jpg..N.jpg (its SAM3 video-tracker input
+    format), prompts the tracker on the selected frame with (x_ratio, y_ratio) as
+    relative coords, propagates, and POSTs boxes back to the segmentation endpoint.
+    """
+    return {
+        "track_id": track.id,
+        "video_id": video.id,
+        "frames": [
+            {
+                "frame_number": frame.frame_number,
+                "frame_url": _storage_url(video.storage_backend, frame.storage_key),
+            }
+            for frame in frames
+        ],
+        "selected_frame_number": selected_frame.frame_number,
+        "x_ratio": payload.x_ratio,
+        "y_ratio": payload.y_ratio,
+    }
+
+
+def _dispatch_sam3_job(worker_url: str, internal_token: str | None, job: dict) -> None:
+    """Fire-and-forget POST to the worker's dispatch endpoint (runs in a
+    BackgroundTask). On any failure the track simply stays 'sam3_processing' and
+    the coach keeps the click anchor — graceful degradation, never a 500."""
+    import httpx
+
+    headers = {"X-Internal-Token": internal_token} if internal_token else {}
+    try:
+        response = httpx.post(worker_url, json=job, headers=headers, timeout=30)
+        response.raise_for_status()
+    except Exception as exc:  # noqa: BLE001 - worker outage must not break the seed
+        logger.warning("SAM3 dispatch failed for track %s: %s", job.get("track_id"), exc)
