@@ -81,6 +81,8 @@ export function ScoutDashApp() {
   const [trackTimeline, setTrackTimeline] = useState<VisionTrackTimeline | null>(null);
   const [isProcessingVideo, setIsProcessingVideo] = useState(false);
   const [isCreatingTrack, setIsCreatingTrack] = useState(false);
+  const [isTracking, setIsTracking] = useState(false);
+  const trackPollRef = useRef<string | null>(null);
   const [videoReadiness, setVideoReadiness] = useState<VideoReadiness | null>(null);
   const [isUploadingVideo, setIsUploadingVideo] = useState(false);
   const [isImportingVideo, setIsImportingVideo] = useState(false);
@@ -328,8 +330,39 @@ export function ScoutDashApp() {
     try {
       const data = await apiGet<VisionTrackTimeline>(`/vision/tracks/${trackId}/timeline`);
       setTrackTimeline(data);
+      if (trackSegStatus(data) === "sam3_processing") {
+        void pollTrackUntilTracked(trackId);
+      }
     } catch (error) {
       showError(error);
+    }
+  }
+
+  // SAM3 tracking is async: the seed returns immediately as "sam3_processing"
+  // while the GPU worker propagates boxes, then writes back "sam3_tracked".
+  // Poll the timeline so the real boxes appear without a manual refresh.
+  async function pollTrackUntilTracked(trackId: string) {
+    if (trackPollRef.current === trackId) return; // already polling this track
+    trackPollRef.current = trackId;
+    setIsTracking(true);
+    const POLL_INTERVAL_MS = 3000;
+    const POLL_MAX_ATTEMPTS = 40; // ~2 minutes
+    try {
+      for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+        if (trackPollRef.current !== trackId) return; // superseded by another track
+        let data: VisionTrackTimeline;
+        try {
+          data = await apiGet<VisionTrackTimeline>(`/vision/tracks/${trackId}/timeline`);
+        } catch {
+          continue; // transient error — keep polling
+        }
+        setTrackTimeline((current) => (current && current.track.id === trackId ? data : current));
+        if (trackSegStatus(data) !== "sam3_processing") return; // reached a terminal status
+      }
+    } finally {
+      if (trackPollRef.current === trackId) trackPollRef.current = null;
+      setIsTracking(false);
     }
   }
 
@@ -627,7 +660,12 @@ export function ScoutDashApp() {
       );
       setTrackTimeline(timeline);
       setTracks((items) => [timeline.track, ...items.filter((item) => item.id !== timeline.track.id)]);
-      showSuccess("Athlete view saved");
+      if (trackSegStatus(timeline) === "sam3_processing") {
+        showSuccess("Player view saved — tracking the player with SAM3…");
+        void pollTrackUntilTracked(timeline.track.id);
+      } else {
+        showSuccess("Athlete view saved");
+      }
     } catch (error) {
       showError(error);
     } finally {
@@ -1440,7 +1478,7 @@ export function ScoutDashApp() {
 
   function renderVision() {
     const selectedFrameUrl = selectedFrame?.frame_url ? mediaUrl(selectedFrame.frame_url) : "";
-    const activeTrackStatus = trackTimeline?.track.segmentation_metadata.status;
+    const activeTrackStatus = trackStatusLabel(trackSegStatus(trackTimeline));
 
     return (
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)]">
@@ -1517,7 +1555,7 @@ export function ScoutDashApp() {
                 label="Selected Player"
                 value={selectedPoint ? `${Math.round(selectedPoint.x * 100)}%, ${Math.round(selectedPoint.y * 100)}%` : "None"}
               />
-              <Metric label="Player View" value={activeTrackStatus ? String(activeTrackStatus) : "Not saved"} />
+              <Metric label="Player View" value={activeTrackStatus} />
             </div>
             <button
               className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-review px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:bg-slate-300"
@@ -1537,9 +1575,17 @@ export function ScoutDashApp() {
               <Activity aria-hidden="true" size={18} />
               Breakdown Findings
             </h2>
-            <span className="rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
-              {trackTimeline ? `${trackTimeline.moments.length} moments` : "No moments"}
-            </span>
+            <div className="flex items-center gap-2">
+              {isTracking ? (
+                <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800">
+                  <RefreshCw aria-hidden="true" className="animate-spin" size={12} />
+                  Tracking…
+                </span>
+              ) : null}
+              <span className="rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
+                {trackTimeline ? `${trackTimeline.moments.length} moments` : "No moments"}
+              </span>
+            </div>
           </div>
 
           {trackTimeline ? (
@@ -1620,6 +1666,27 @@ export function ScoutDashApp() {
         </section>
       </div>
     );
+  }
+}
+
+function trackSegStatus(timeline: VisionTrackTimeline | null): string {
+  return String(timeline?.track.segmentation_metadata?.status ?? "");
+}
+
+function trackStatusLabel(status: string): string {
+  switch (status) {
+    case "sam3_processing":
+      return "Tracking… (SAM3)";
+    case "sam3_tracked":
+      return "Tracked";
+    case "sam3_adapter_not_configured":
+      return "Seed saved (tracking off)";
+    case "sam3_failed":
+      return "Tracking failed";
+    case "":
+      return "Not saved";
+    default:
+      return status;
   }
 }
 
