@@ -48,6 +48,10 @@ services:
       S3_BUCKET: scoutdash-film
       S3_ACCESS_KEY_ID: scoutdash
       S3_SECRET_ACCESS_KEY: scoutdash-secret
+      SAM3_WORKER_URL: ${SAM3_WORKER_URL:-}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
+      SAM3_MAX_TRACK_FRAMES: ${SAM3_MAX_TRACK_FRAMES:-121}
+      SAM3_TRACK_TIMEOUT_SECONDS: ${SAM3_TRACK_TIMEOUT_SECONDS:-600}
     depends_on:
       postgres:
         condition: service_started

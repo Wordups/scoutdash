@@ -30,12 +30,15 @@ class Settings(BaseSettings):
     s3_public_endpoint_url: AnyHttpUrl | None = None
     s3_presigned_url_ttl_seconds: int = 3600
 
-    # SAM3 tracking — the GPU worker (separate Modal service) owns all SAM3 code.
+    # SAM3 tracking: the GPU worker (separate Modal service) owns all SAM3 code.
     # The backend dispatches jobs to sam3_worker_url; the worker POSTs results back
     # to POST /vision/tracks/{id}/segmentation guarded by internal_api_token. Both
-    # default unset so the seed path degrades gracefully (no dispatch, no auth wall).
+    # default unset so the seed path degrades gracefully. A nonempty internal
+    # token is required before a configured worker can receive a tracking job.
     sam3_worker_url: str | None = None
     internal_api_token: str | None = None
+    sam3_max_track_frames: int = Field(default=121, ge=2, le=1000)
+    sam3_track_timeout_seconds: int = Field(default=600, ge=60, le=3600)
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

@@ -1,57 +1,74 @@
-# ScoutDash SAM 3 Tracking Worker
+# ScoutDash SAM3 Tracking Worker
 
-A **separate GPU service** that owns all SAM 3 code. The ScoutDash backend runs CPU /
-Python 3.14 on a buildpack and **cannot** import `sam3`/`torch`, so it dispatches a job to
-this worker and receives per-frame boxes back. SAM 3 needs Python 3.12, PyTorch 2.7+, a
-CUDA 12.6+ GPU, and the HF-gated `facebook/sam3.1` checkpoint — all isolated here.
+This is the separate Modal GPU service for ScoutDash player tracking. It tracks
+one coach-selected player through a bounded set of extracted basketball-film
+frames. The CPU-only ScoutDash backend never imports PyTorch or SAM3.
 
-## Architecture
+## What it does
 
+1. The coach clicks a player in a clear film frame.
+2. ScoutDash sends the selected point and a short ordered frame window.
+3. The Modal worker starts a SAM3 video-predictor session, applies the point prompt, and propagates the player through the window.
+4. It writes normalized `{x, y, width, height}` boxes back to ScoutDash.
+5. It always writes either `sam3_tracked` or `sam3_failed` so the Film Room never stays falsely complete.
+
+This implementation intentionally uses the pinned base SAM3 video predictor for
+the single-player workflow. It does not claim SAM3.1 Object Multiplex support.
+
+## Requirements
+
+- A Modal account and local `modal` CLI login.
+- Hugging Face access to the gated `facebook/sam3` checkpoint and an `HF_TOKEN`.
+- A public ScoutDash backend callback URL ending in `/api`.
+- Public or presigned frame URLs reachable from Modal. `localhost`, Docker service names, and private MinIO addresses will not work.
+- Persistent production storage such as S3 or R2. Local upload storage is not suitable for a remote worker.
+- A nonempty shared internal token on both the backend and worker. The worker will reject unauthenticated dispatches.
+
+## Configure Modal secrets
+
+```bash
+modal secret create huggingface HF_TOKEN=hf_your_token
+modal secret create scoutdash-internal BACKEND_API_URL=https://your-backend.example/api INTERNAL_TOKEN=your-shared-token
 ```
-coach click ──▶ POST /vision/track-seeds (backend, CPU)
-                     │  status → "sam3_processing"
-                     ▼
-              POST {worker}/dispatch  ──▶  .spawn() GPU job (returns immediately)
-                                              │  init_state → add_new_points_or_box
-                                              │  → propagate_in_video → ratio boxes
-                                              ▼
-              POST /vision/tracks/{id}/segmentation (backend write-back)
-                     │  replace bounding_data.frames[*].box, status → "sam3_tracked"
-                     ▼
-              GET /vision/tracks/{id}/timeline  ◀── frontend (scout-lite.html) re-fetches
-```
 
-The backend never imports `sam3`/`torch`; `backend/requirements.txt` carries no ML deps.
+`INTERNAL_TOKEN` must match the backend's `INTERNAL_API_TOKEN`. Keep both values private.
 
-## Deploy (Modal)
+## Deploy
 
 ```bash
 pip install modal
 modal token new
-
-# 1. Request access to https://huggingface.co/facebook/sam3.1, make an HF token:
-modal secret create huggingface HF_TOKEN=hf_xxx
-
-# 2. Backend callback URL + shared secret (same token the backend uses as INTERNAL_API_TOKEN):
-modal secret create scoutdash-internal \
-  BACKEND_API_URL=https://<backend-host>/api INTERNAL_TOKEN=<shared-secret>
-
-# 3. Deploy
 modal deploy services/sam3-worker/app.py
 ```
 
-Then set on the **backend**:
-- `SAM3_WORKER_URL` = the printed `dispatch` endpoint URL
-- `INTERNAL_API_TOKEN` = the same `<shared-secret>` as `INTERNAL_TOKEN` above
+Set the returned `/dispatch` URL and the shared token on the ScoutDash backend:
 
-## Notes
+```env
+SAM3_WORKER_URL=https://your-modal-dispatch-url
+INTERNAL_API_TOKEN=your-shared-token
+SAM3_MAX_TRACK_FRAMES=121
+SAM3_TRACK_TIMEOUT_SECONDS=600
+```
 
-- `gpu="L4"`, `scaledown_window=120` → per-second billing, zero idle cost.
-- Boxes are emitted as `{x, y, width, height}` **ratios** to match the seed box shape the
-  backend stores and the frontend renders.
-- Point-tracking only (single object). No text-concept segmentation, no coaching evaluation —
-  SAM 3 identifies and tracks; coach validation stays `required`.
-- **Untested on real GPU/Modal** until the first `modal deploy`. The `TODO(CC)` markers in
-  `app.py` flag the exact SAM3 call-surface details to confirm against the installed version.
-- Order of operations: ffprobe/extraction must work so frames exist (0.jpg…N.jpg input) before
-  this worker has anything to track.
+The worker pins the upstream SAM3 commit in `app.py`, so a later Modal image
+rebuild cannot silently switch predictor APIs.
+
+## First smoke test
+
+Use a short 10 to 20 second basketball clip with a clearly visible player.
+
+1. Confirm the backend has persistent storage and externally reachable frame URLs.
+2. Upload the clip and run **Break Down Film**.
+3. Select an athlete, choose a clean frame, and click the player.
+4. Choose **Track selected player**.
+5. Confirm the status changes from `Tracking... (SAM3)` to `Tracked`, and that the main frame shows a moving box.
+
+If the worker cannot run, ScoutDash shows the reason and allows a retry. Inspect
+the Modal logs for GPU or checkpoint issues before retrying.
+
+## Scope and limits
+
+- One selected player per track.
+- SAM3 identifies and follows the player. Coaches still validate all evidence.
+- The backend sends a bounded frame window around the selected frame to control GPU time.
+- GPU inference still needs a real-film validation before calling the feature production-ready.
