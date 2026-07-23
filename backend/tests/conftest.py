@@ -14,6 +14,7 @@ TEST_UPLOADS = TEST_ROOT / "uploads"
 os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB.as_posix()}"
 os.environ["LOCAL_UPLOAD_DIR"] = str(TEST_UPLOADS)
 os.environ["PUBLIC_MEDIA_BASE_URL"] = "http://testserver/media"
+os.environ["INTERNAL_API_TOKEN"] = "test-internal-token"
 
 from app.db.base import Base  # noqa: E402
 from app.db.session import engine  # noqa: E402
@@ -32,4 +33,3 @@ def reset_database():
 def client():
     with TestClient(app) as test_client:
         yield test_client
-

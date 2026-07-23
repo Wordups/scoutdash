@@ -58,6 +58,7 @@ const workflowSteps = ["Upload Film", "Break Down Film", "Review Findings", "Rev
 
 export function ScoutDashApp() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const filmFrameStageRef = useRef<HTMLButtonElement | null>(null);
 
   const [tab, setTab] = useState<Tab>("dashboard");
   const [isTabletNavOpen, setIsTabletNavOpen] = useState(false);
@@ -83,6 +84,7 @@ export function ScoutDashApp() {
   const [isCreatingTrack, setIsCreatingTrack] = useState(false);
   const [isTracking, setIsTracking] = useState(false);
   const trackPollRef = useRef<string | null>(null);
+  const [filmFrameStageSize, setFilmFrameStageSize] = useState({ width: 0, height: 0 });
   const [videoReadiness, setVideoReadiness] = useState<VideoReadiness | null>(null);
   const [isUploadingVideo, setIsUploadingVideo] = useState(false);
   const [isImportingVideo, setIsImportingVideo] = useState(false);
@@ -182,12 +184,14 @@ export function ScoutDashApp() {
   }, [selectedAthleteId]);
 
   useEffect(() => {
+    trackPollRef.current = null;
+    setIsTracking(false);
+    setSelectedPoint(null);
+    setTrackTimeline(null);
     if (!selectedVideoId) {
       setFrames([]);
       setSelectedFrameId("");
-      setSelectedPoint(null);
       setTracks([]);
-      setTrackTimeline(null);
       setVideoReadiness(null);
       return;
     }
@@ -196,6 +200,16 @@ export function ScoutDashApp() {
     void loadTracks(selectedVideoId);
     void loadVideoReadiness(selectedVideoId);
   }, [selectedVideoId]);
+
+  useEffect(() => {
+    const stage = filmFrameStageRef.current;
+    if (!stage) return;
+    const update = () => setFilmFrameStageSize({ width: stage.clientWidth, height: stage.clientHeight });
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, [selectedFrame?.id]);
 
   useEffect(() => {
     if (!tagForm.category_id && categories.length > 0) {
@@ -307,8 +321,8 @@ export function ScoutDashApp() {
       const data = await apiGet<VideoFrame[]>(`/videos/${videoId}/frames`);
       setFrames(data);
       setSelectedFrameId((current) => (data.some((item) => item.id === current) ? current : data[0]?.id ?? ""));
+      setSelectedPoint(null);
       if (!data.length) {
-        setSelectedPoint(null);
         setTrackTimeline(null);
       }
     } catch (error) {
@@ -346,7 +360,7 @@ export function ScoutDashApp() {
     trackPollRef.current = trackId;
     setIsTracking(true);
     const POLL_INTERVAL_MS = 3000;
-    const POLL_MAX_ATTEMPTS = 40; // ~2 minutes
+    const POLL_MAX_ATTEMPTS = 205; // extends beyond the backend's ten-minute expiry window
     try {
       for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
@@ -355,14 +369,30 @@ export function ScoutDashApp() {
         try {
           data = await apiGet<VisionTrackTimeline>(`/vision/tracks/${trackId}/timeline`);
         } catch {
-          continue; // transient error — keep polling
+          continue; // transient error, keep polling
         }
         setTrackTimeline((current) => (current && current.track.id === trackId ? data : current));
         if (trackSegStatus(data) !== "sam3_processing") return; // reached a terminal status
       }
+      if (trackPollRef.current === trackId) {
+        try {
+          const finalData = await apiGet<VisionTrackTimeline>(`/vision/tracks/${trackId}/timeline`);
+          setTrackTimeline((current) => (current && current.track.id === trackId ? finalData : current));
+          if (trackSegStatus(finalData) === "sam3_processing") {
+            setNotice({
+              kind: "error",
+              message: "Tracking did not finish in time. Check the worker and frame storage, then retry."
+            });
+          }
+        } catch {
+          setNotice({ kind: "error", message: "Could not confirm the final tracking status. Refresh the Film Room and retry if needed." });
+        }
+      }
     } finally {
-      if (trackPollRef.current === trackId) trackPollRef.current = null;
-      setIsTracking(false);
+      if (trackPollRef.current === trackId) {
+        trackPollRef.current = null;
+        setIsTracking(false);
+      }
     }
   }
 
@@ -661,10 +691,12 @@ export function ScoutDashApp() {
       setTrackTimeline(timeline);
       setTracks((items) => [timeline.track, ...items.filter((item) => item.id !== timeline.track.id)]);
       if (trackSegStatus(timeline) === "sam3_processing") {
-        showSuccess("Player view saved — tracking the player with SAM3…");
+        showSuccess("Player view saved. SAM3 is tracking the selected player.");
         void pollTrackUntilTracked(timeline.track.id);
+      } else if (trackSegStatus(timeline) === "sam3_failed") {
+        setNotice({ kind: "error", message: trackFailureMessage(timeline) });
       } else {
-        showSuccess("Athlete view saved");
+        showSuccess("Player view saved. Tracking is off until a SAM3 worker is configured.");
       }
     } catch (error) {
       showError(error);
@@ -673,12 +705,40 @@ export function ScoutDashApp() {
     }
   }
 
+  async function retryTrack() {
+    if (!trackTimeline) return;
+    try {
+      const timeline = await apiPost<VisionTrackTimeline>(`/vision/tracks/${trackTimeline.track.id}/retry`, {});
+      setTrackTimeline(timeline);
+      setTracks((items) => [timeline.track, ...items.filter((item) => item.id !== timeline.track.id)]);
+      if (trackSegStatus(timeline) === "sam3_processing") {
+        showSuccess("SAM3 retry started for this player.");
+        void pollTrackUntilTracked(timeline.track.id);
+      } else {
+        setNotice({ kind: "error", message: trackFailureMessage(timeline) });
+      }
+    } catch (error) {
+      showError(error);
+    }
+  }
+
   function selectFramePoint(frame: VideoFrame, event: MouseEvent<HTMLButtonElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
-    const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-    const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+    const geometry = containedImageGeometry(frame, rect.width, rect.height);
+    const xInImage = event.clientX - rect.left - geometry.left * rect.width;
+    const yInImage = event.clientY - rect.top - geometry.top * rect.height;
+    if (xInImage < 0 || yInImage < 0 || xInImage > geometry.width * rect.width || yInImage > geometry.height * rect.height) {
+      return;
+    }
+    const x = xInImage / (geometry.width * rect.width);
+    const y = yInImage / (geometry.height * rect.height);
     setSelectedFrameId(frame.id);
     setSelectedPoint({ x, y });
+  }
+
+  function selectFrame(frame: VideoFrame) {
+    setSelectedFrameId(frame.id);
+    setSelectedPoint(null);
   }
 
   function useTimelineMomentForTag(moment: TrackTimelineMoment) {
@@ -1036,19 +1096,13 @@ export function ScoutDashApp() {
                           selectedFrame?.id === frame.id ? "border-review ring-2 ring-blue-100" : "border-line hover:border-review"
                         }`}
                         key={frame.id}
-                        onClick={(event) => selectFramePoint(frame, event)}
+                        onClick={() => selectFrame(frame)}
                         type="button"
                       >
                         {frame.frame_url ? <img alt="" className="h-full w-full object-cover" src={mediaUrl(frame.frame_url)} /> : null}
                         <span className="absolute bottom-1 left-1 rounded bg-white/90 px-1.5 py-0.5 text-[10px] font-semibold text-ink">
                           {formatTime(frame.timestamp_seconds)}
                         </span>
-                        {selectedFrame?.id === frame.id && selectedPoint ? (
-                          <span
-                            className="absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-review shadow"
-                            style={{ left: `${selectedPoint.x * 100}%`, top: `${selectedPoint.y * 100}%` }}
-                          />
-                        ) : null}
                       </button>
                     ))}
                   </div>
@@ -1479,6 +1533,10 @@ export function ScoutDashApp() {
   function renderVision() {
     const selectedFrameUrl = selectedFrame?.frame_url ? mediaUrl(selectedFrame.frame_url) : "";
     const activeTrackStatus = trackStatusLabel(trackSegStatus(trackTimeline));
+    const stageGeometry = selectedFrame
+      ? containedImageGeometry(selectedFrame, filmFrameStageSize.width, filmFrameStageSize.height)
+      : { left: 0, top: 0, width: 1, height: 1 };
+    const activeMoment = trackTimeline?.moments.find((moment) => moment.frame_id === selectedFrame?.id) ?? null;
 
     return (
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)]">
@@ -1513,6 +1571,7 @@ export function ScoutDashApp() {
               <button
                 className="relative aspect-video overflow-hidden rounded-md border border-line bg-slate-100 text-left"
                 onClick={(event) => selectFramePoint(selectedFrame, event)}
+                ref={filmFrameStageRef}
                 type="button"
               >
                 {selectedFrameUrl ? (
@@ -1523,7 +1582,22 @@ export function ScoutDashApp() {
                 {selectedPoint ? (
                   <span
                     className="absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-review shadow"
-                    style={{ left: `${selectedPoint.x * 100}%`, top: `${selectedPoint.y * 100}%` }}
+                    style={{
+                      left: `${(stageGeometry.left + selectedPoint.x * stageGeometry.width) * 100}%`,
+                      top: `${(stageGeometry.top + selectedPoint.y * stageGeometry.height) * 100}%`
+                    }}
+                  />
+                ) : null}
+                {activeMoment ? (
+                  <span
+                    aria-label="Tracked player"
+                    className="pointer-events-none absolute border-2 border-review shadow-[0_0_0_1px_rgba(255,255,255,0.8)]"
+                    style={{
+                      left: `${(stageGeometry.left + activeMoment.box.x * stageGeometry.width) * 100}%`,
+                      top: `${(stageGeometry.top + activeMoment.box.y * stageGeometry.height) * 100}%`,
+                      width: `${activeMoment.box.width * stageGeometry.width * 100}%`,
+                      height: `${activeMoment.box.height * stageGeometry.height * 100}%`
+                    }}
                   />
                 ) : null}
               </button>
@@ -1534,7 +1608,7 @@ export function ScoutDashApp() {
                       selectedFrame?.id === frame.id ? "border-review ring-2 ring-blue-100" : "border-line hover:border-review"
                     }`}
                     key={frame.id}
-                    onClick={(event) => selectFramePoint(frame, event)}
+                    onClick={() => selectFrame(frame)}
                     type="button"
                   >
                     {frame.frame_url ? <img alt="" className="h-full w-full object-cover" src={mediaUrl(frame.frame_url)} /> : null}
@@ -1564,7 +1638,7 @@ export function ScoutDashApp() {
               type="button"
             >
               <Save aria-hidden="true" size={16} />
-              {isCreatingTrack ? "Saving" : "Save Player View"}
+              {isCreatingTrack ? "Starting track" : "Track selected player"}
             </button>
           </div>
         </section>
@@ -1579,7 +1653,7 @@ export function ScoutDashApp() {
               {isTracking ? (
                 <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800">
                   <RefreshCw aria-hidden="true" className="animate-spin" size={12} />
-                  Tracking…
+                  Tracking...
                 </span>
               ) : null}
               <span className="rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
@@ -1598,9 +1672,24 @@ export function ScoutDashApp() {
                       {trackTimeline.athlete ? athleteLabel(trackTimeline.athlete) : "Unassigned athlete"}
                     </div>
                   </div>
-                  <span className="rounded bg-white px-2 py-1 text-xs font-medium text-slate-700">{trackTimeline.track.status}</span>
+                  <span className="rounded bg-white px-2 py-1 text-xs font-medium text-slate-700">
+                    {trackStatusLabel(trackSegStatus(trackTimeline))}
+                  </span>
                 </div>
               </div>
+
+              {trackSegStatus(trackTimeline) === "sam3_failed" ? (
+                <div className="flex flex-col gap-3 rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900 sm:flex-row sm:items-center sm:justify-between">
+                  <span>{trackFailureMessage(trackTimeline)}</span>
+                  <button
+                    className="inline-flex h-9 items-center justify-center rounded-md border border-rose-300 bg-white px-3 text-xs font-semibold hover:border-rose-500"
+                    onClick={retryTrack}
+                    type="button"
+                  >
+                    Retry SAM3
+                  </button>
+                </div>
+              ) : null}
 
               <div className="max-h-[520px] space-y-2 overflow-y-auto pr-1">
                 {trackTimeline.moments.map((moment) => (
@@ -1655,7 +1744,9 @@ export function ScoutDashApp() {
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-semibold">{track.track_label || "Coach-selected player"}</span>
-                    <span className="rounded bg-white px-2 py-1 text-xs font-medium text-slate-700">{track.status}</span>
+                    <span className="rounded bg-white px-2 py-1 text-xs font-medium text-slate-700">
+                      {trackStatusLabel(trackSegStatusFromTrack(track))}
+                    </span>
                   </div>
                 </button>
               ))
@@ -1670,7 +1761,33 @@ export function ScoutDashApp() {
 }
 
 function trackSegStatus(timeline: VisionTrackTimeline | null): string {
-  return String(timeline?.track.segmentation_metadata?.status ?? "");
+  return timeline ? trackSegStatusFromTrack(timeline.track) : "";
+}
+
+function trackSegStatusFromTrack(track: VisionTrack): string {
+  const status = track.segmentation_metadata?.status;
+  return typeof status === "string" ? status : track.status;
+}
+
+function trackFailureMessage(timeline: VisionTrackTimeline): string {
+  const message = timeline.track.segmentation_metadata?.error_message;
+  return typeof message === "string" && message.trim()
+    ? message
+    : "SAM3 could not finish this player track. Check the worker and frame storage, then retry.";
+}
+
+function containedImageGeometry(frame: VideoFrame, stageWidth: number, stageHeight: number) {
+  if (!frame.width || !frame.height || stageWidth <= 0 || stageHeight <= 0) {
+    return { left: 0, top: 0, width: 1, height: 1 };
+  }
+  const sourceAspect = frame.width / frame.height;
+  const stageAspect = stageWidth / stageHeight;
+  if (sourceAspect >= stageAspect) {
+    const height = stageAspect / sourceAspect;
+    return { left: 0, top: (1 - height) / 2, width: 1, height };
+  }
+  const width = sourceAspect / stageAspect;
+  return { left: (1 - width) / 2, top: 0, width, height: 1 };
 }
 
 function trackStatusLabel(status: string): string {

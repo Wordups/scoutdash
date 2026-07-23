@@ -318,7 +318,9 @@ def test_video_processing_and_player_track_seed_workflow(client, tmp_path):
     assert timeline["track"]["source"] == "coach_click_sam3_seed"
     assert timeline["track"]["segmentation_metadata"]["status"] == "sam3_adapter_not_configured"
     assert timeline["athlete"]["display_name"] == "Player #3"
-    assert len(timeline["moments"]) == completed_job["frame_count_extracted"]
+    # A seed is only the coach-selected anchor. Propagated moments arrive
+    # after the SAM3 worker writes a real track back.
+    assert len(timeline["moments"]) == 1
 
     timeline_response = client.get(f"/api/vision/tracks/{timeline['track']['id']}/timeline")
     assert timeline_response.status_code == 200

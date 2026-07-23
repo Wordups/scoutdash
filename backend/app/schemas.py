@@ -491,7 +491,7 @@ class VisionTrackTimeline(BaseModel):
 
 class SegmentationFrameBox(BaseModel):
     """One propagated frame from the SAM3 worker. Box is {x, y, width, height}
-    as ratios in [0, 1] — same shape as the seed boxes the timeline returns."""
+    as ratios in [0, 1], the same shape as the seed boxes the timeline returns."""
 
     frame_number: int
     box: dict[str, float]
@@ -500,8 +500,10 @@ class SegmentationFrameBox(BaseModel):
 class TrackSegmentationWriteback(BaseModel):
     """Payload the SAM3 GPU worker POSTs back with per-frame propagated boxes."""
 
-    status: str = "sam3_tracked"
-    model: str | None = "sam3.1"
+    attempt_id: str | None = Field(default=None, min_length=1, max_length=64)
+    status: Literal["sam3_tracked", "sam3_failed"] = "sam3_tracked"
+    model: str | None = "sam3"
     version: str | None = None
     coach_validation: str = "required"
+    error_message: str | None = Field(default=None, max_length=600)
     frames: list[SegmentationFrameBox] = Field(default_factory=list)

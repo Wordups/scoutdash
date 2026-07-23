@@ -2,7 +2,7 @@
 
 ScoutDash is a sports development intelligence platform for organizing game film around athlete identification, athlete timelines, and coach-reviewed evidence.
 
-The current product foundation is the Video Intelligence Engine: upload or import film, extract frames, select the athlete, create a SAM3-ready player track, review that athlete's timeline, and turn moments into evidence tags. SAM3 is the identification layer only. Coaches validate, and ScoutDash stores evidence.
+The current product foundation is the Video Intelligence Engine: upload or import film, extract frames, select the athlete, create a SAM3 player track, review that athlete's timeline, and turn moments into evidence tags. SAM3 is the identification layer only. Coaches validate, and ScoutDash stores evidence.
 
 ## Stack
 
@@ -11,7 +11,7 @@ The current product foundation is the Video Intelligence Engine: upload or impor
 - Database: PostgreSQL in Docker, SQLite fallback for quick local backend runs
 - Video: FFmpeg frame extraction with a packaged binary fallback; FFprobe is optional
 - Storage: local or S3-compatible persistent video and frame storage
-- Vision: SAM3-ready module at `services/vision`
+- Vision: SAM3 backend handoff plus a separate GPU worker at `services/sam3-worker`
 
 ## Local Development
 
@@ -79,7 +79,7 @@ during deployment and uploaded film will need to be uploaded again.
 - organizations, teams, athletes, events
 - film uploads, direct URL imports, and video review
 - FFmpeg frame extraction
-- coach-click player track seeds for future SAM3 segmentation and tracking
+- coach-click player track seeds with optional SAM3 GPU tracking and explicit failed/retry states
 - athlete timeline review from stored track metadata
 - universal categories and tags
 - timestamped behavior evidence
